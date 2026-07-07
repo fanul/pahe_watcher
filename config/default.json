@@ -1,0 +1,41 @@
+{
+  "server": {
+    "port": 8787,
+    "host": "0.0.0.0",
+    "guiToken": ""
+  },
+  "watcher": {
+    "baseUrl": "https://pahe.ink",
+    "pollIntervalSeconds": 300,
+    "perPage": 10,
+    "preferredProviders": ["GD"],
+    "preferredQualities": ["720p", "1080p"],
+    "autoResolve": true
+  },
+  "bypass": {
+    "browserMode": "headless",
+    "concurrency": 1,
+    "timeoutSeconds": 180,
+    "profileDir": "./data/browser-profile",
+    "maxRetries": 2,
+    "captcha": {
+      "provider": "manual",
+      "twoCaptchaApiKey": ""
+    },
+    "gdflix": {
+      "email": "",
+      "password": ""
+    }
+  },
+  "sheets": {
+    "serviceAccountKey": "./credentials/google-service-account.json",
+    "sheetId": "",
+    "tab": "Downloads"
+  },
+  "store": {
+    "path": "./data/state.json"
+  },
+  "logging": {
+    "level": "info"
+  }
+}

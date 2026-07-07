@@ -1,0 +1,39 @@
+# pahe-watcher — Docker Compose for the watcher + web GUI.
+#
+#   docker compose up -d --build
+#
+# Put your Google service-account key at ./credentials/google-service-account.json
+# and your settings in a .env file (see .env.example).
+services:
+  watcher:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: pahe-watcher:latest
+    container_name: pahe-watcher
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8787}:8787"
+    volumes:
+      - watcher-data:/data
+      - ./credentials:/app/credentials:ro
+    # For MANUAL captcha solving you need a visible browser. In containers use
+    # BROWSER_MODE=headless with CAPTCHA_PROVIDER=2captcha, OR run headful with a
+    # VNC sidecar (see the commented service below).
+
+  # ── Optional: MCP server (next phase) ──
+  # mcp:
+  #   build: { context: ., dockerfile: docker/Dockerfile }
+  #   command: ["node", "src/mcp/server.js"]
+  #   env_file: [.env]
+  #   volumes:
+  #     - watcher-data:/data
+  #     - ./credentials:/app/credentials:ro
+
+  # ── Optional: headful browser + noVNC for manual captcha (next phase) ──
+  # See ARCHITECTURE.md "Manual captcha in containers".
+
+volumes:
+  watcher-data:

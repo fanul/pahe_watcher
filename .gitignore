@@ -1,0 +1,28 @@
+# deps
+node_modules/
+
+# env & secrets
+.env
+.env.local
+*.pem
+credentials/*.json
+!credentials/.gitkeep
+google-service-account.json
+
+# runtime data (persisted state, logs, browser profiles)
+data/*
+!data/.gitkeep
+logs/
+*.log
+
+# playwright
+playwright-report/
+test-results/
+.cache/
+
+# os
+.DS_Store
+Thumbs.db
+
+# local editor/agent settings
+.claude/settings.local.json

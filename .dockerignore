@@ -1,0 +1,11 @@
+node_modules
+data
+logs
+credentials/*.json
+.env
+.env.local
+.git
+*.log
+playwright-report
+test-results
+.cache

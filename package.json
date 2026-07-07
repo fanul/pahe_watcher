@@ -1,0 +1,33 @@
+{
+  "name": "pahe-watcher",
+  "version": "0.1.0",
+  "description": "Automated watcher for pahe.ink: detects new movie posts, resolves ad-shortener + GDFlix chains to Google Drive links, and logs them to a Google Sheet. Controlled via a web GUI.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "pahe-watcher": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "server": "node src/index.js --server-only",
+    "watch:once": "node src/index.js --once",
+    "install:browser": "playwright install chromium",
+    "mcp": "node src/mcp/server.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.22.2",
+    "googleapis": "^144.0.0",
+    "playwright": "^1.61.1",
+    "ws": "^8.21.0"
+  },
+  "optionalDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pahe-watcher</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🎬 pahe-watcher</div>
+    <div class="status-pills" id="statusPills"></div>
+    <div class="topbar-actions">
+      <button id="btnPoll" class="btn">Check now</button>
+      <button id="btnWatcher" class="btn">Pause watcher</button>
+      <button id="btnQueue" class="btn">Pause queue</button>
+      <button id="btnSettings" class="btn ghost">⚙ Settings</button>
+    </div>
+  </header>
+
+  <div id="captchaBanner" class="captcha-banner hidden">
+    <span>🔐 A job needs a captcha solved in the browser window.</span>
+    <a id="captchaLink" href="#" target="_blank" rel="noopener">Open page</a>
+    <button id="btnCaptchaSolved" class="btn small">I solved it</button>
+  </div>
+
+  <main class="grid">
+    <section class="panel">
+      <h2>New posts <span class="muted" id="postCount"></span></h2>
+      <div id="posts" class="list"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Jobs <span class="muted" id="jobStats"></span></h2>
+      <div id="jobs" class="list"></div>
+    </section>
+
+    <section class="panel logs">
+      <h2>Live log</h2>
+      <div id="log" class="logbox"></div>
+    </section>
+  </main>
+
+  <dialog id="settingsDialog">
+    <form method="dialog" id="settingsForm">
+      <h3>Settings</h3>
+      <label>Preferred providers (comma)
+        <input name="preferredProviders" placeholder="GD,1F,MG" />
+      </label>
+      <label>Preferred qualities (comma)
+        <input name="preferredQualities" placeholder="720p,1080p" />
+      </label>
+      <label>Poll interval (seconds)
+        <input name="pollIntervalSeconds" type="number" min="15" />
+      </label>
+      <label class="row"><input name="autoResolve" type="checkbox" /> Auto-resolve new posts</label>
+      <label>Browser mode
+        <select name="browserMode"><option value="headless">headless</option><option value="headful">headful (for manual captcha)</option></select>
+      </label>
+      <div class="muted small">Sheet: <span id="sheetInfo"></span></div>
+      <menu>
+        <button value="cancel" class="btn ghost">Cancel</button>
+        <button value="save" id="btnSaveSettings" class="btn">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
