@@ -59,16 +59,7 @@ export class ManualSolver {
           if (page.isClosed()) return;
           const currentUrl = page.url();
           // If the page redirected to a destination host, we successfully bypassed!
-          if (
-            currentUrl !== startUrl && 
-            (currentUrl.includes('gdflix') || 
-             currentUrl.includes('drive.google') || 
-             currentUrl.includes('pixeldrain') || 
-             currentUrl.includes('pixeldra.in') || 
-             currentUrl.includes('workers.dev') ||
-             currentUrl.includes('r2.cloudflarestorage') ||
-             currentUrl.includes('googleusercontent'))
-          ) {
+          if (currentUrl !== startUrl) {
             log.info('Auto-detected captcha bypass success due to page navigation', { currentUrl });
             resolve(true);
           }
