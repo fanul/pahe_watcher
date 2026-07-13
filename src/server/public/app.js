@@ -200,6 +200,7 @@ $('#btnSettings').onclick = async () => {
   f.initialPageDelaySeconds.value = cfg.bypass.initialPageDelaySeconds || 1.5;
   f.speedUpExclusions.value = (cfg.bypass.speedUpExclusions || []).join(', ');
   f.tabPruningWhitelist.value = (cfg.bypass.tabPruningWhitelist || []).join(', ');
+  f.pruneAdTabs.checked = cfg.bypass.pruneAdTabs === true;
 
   const stealth = cfg.bypass.stealth || {};
   f.stealth_disableAutomationFlag.checked = stealth.disableAutomationFlag !== false;
@@ -249,6 +250,7 @@ $('#settingsForm').addEventListener('submit', async (e) => {
       initialPageDelaySeconds: parseFloat(f.initialPageDelaySeconds.value) || 1.5,
       speedUpExclusions: splitList(f.speedUpExclusions.value),
       tabPruningWhitelist: splitList(f.tabPruningWhitelist.value),
+      pruneAdTabs: f.pruneAdTabs.checked,
       stealth: {
         disableAutomationFlag: f.stealth_disableAutomationFlag.checked,
         useStealthUserAgent: f.stealth_useStealthUserAgent.checked,

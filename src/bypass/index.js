@@ -130,14 +130,16 @@ export class BypassEngine {
           continue;
         }
 
-        // 2. Close unwanted ad popups (if it's not the initial tab and not whitelisted)
-        const isInitialTab = (p === pages[0] && pages.length === 1);
-        if (!isInitialTab && url && url !== 'about:blank') {
-          const isWhitelisted = WHITELIST_DOMAINS.some(d => url.toLowerCase().includes(d));
-          if (!isWhitelisted) {
-            ctx.log?.(`[tab] Closing unwanted ad popup tab: ${shorten(url)}`);
-            await p.close().catch(() => {});
-            continue;
+        // 2. Close unwanted ad popups (if enabled, and it's not the initial tab and not whitelisted)
+        if (this.config?.bypass?.pruneAdTabs) {
+          const isInitialTab = (p === pages[0] && pages.length === 1);
+          if (!isInitialTab && url && url !== 'about:blank') {
+            const isWhitelisted = WHITELIST_DOMAINS.some(d => url.toLowerCase().includes(d));
+            if (!isWhitelisted) {
+              ctx.log?.(`[tab] Closing unwanted ad popup tab: ${shorten(url)}`);
+              await p.close().catch(() => {});
+              continue;
+            }
           }
         }
 
