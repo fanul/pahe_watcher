@@ -130,6 +130,14 @@ export class BypassEngine {
           continue;
         }
 
+        // 1b. Close search spam/ad redirect popup tabs immediately (always safe)
+        const isInitialTabCheck = (p === pages[0] && pages.length === 1);
+        if (!isInitialTabCheck && url && (url.includes('google.com/search') || url.includes('olxtoto'))) {
+          ctx.log?.(`[tab] Closing ad redirect/spam popup: ${shorten(url)}`);
+          await p.close().catch(() => {});
+          continue;
+        }
+
         // 2. Close unwanted ad popups (if enabled, and it's not the initial tab and not whitelisted)
         if (this.config?.bypass?.pruneAdTabs) {
           const isInitialTab = (p === pages[0] && pages.length === 1);

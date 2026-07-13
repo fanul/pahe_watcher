@@ -14,6 +14,9 @@ const GDFLIX_HOST_RE = /gdflix\.[a-z]+/i;
 
 // Buttons on a gdflix file page, most-preferred first.
 const LINK_BUTTON_SELECTORS = [
+  'button#ddl',
+  '#ddl',
+  'button:has-text("G-Drive Link")',
   'a:has-text("Cloud Download")',
   'a:has-text("Google Drive")',
   'a:has-text("GDToT")',
@@ -24,7 +27,7 @@ const LINK_BUTTON_SELECTORS = [
 ];
 
 // A resolved final link looks like one of these hosts.
-const FINAL_HOST_RE = /(drive\.google\.com|googleusercontent\.com|pixeldrain\.|workers\.dev|\.r2\.|pixeldra\.in)/i;
+const FINAL_HOST_RE = /(drive\.google\.com|googleusercontent\.com|usercontent\.google|pixeldrain\.|workers\.dev|\.r2\.|pixeldra\.in)/i;
 
 export function isGdflixUrl(url) {
   try {
@@ -35,7 +38,7 @@ export function isGdflixUrl(url) {
 }
 
 export function classifyFinalLink(url) {
-  if (/drive\.google\.com|googleusercontent/.test(url)) return 'google-drive';
+  if (/drive\.google\.com|googleusercontent|usercontent\.google/.test(url)) return 'google-drive';
   if (/pixeldrain|pixeldra\.in/.test(url)) return 'pixeldrain';
   if (/workers\.dev|\.r2\./.test(url)) return 'worker-proxy';
   return 'direct';
@@ -48,15 +51,26 @@ function parseCookieString(cookieStr, domain) {
     try {
       const parsed = JSON.parse(cookieStr);
       if (Array.isArray(parsed)) {
-        return parsed.map((c) => ({
-          name: c.name,
-          value: c.value,
-          domain: c.domain || domain,
-          path: c.path || '/',
-          secure: c.secure ?? true,
-          httpOnly: c.httpOnly ?? false,
-          sameSite: c.sameSite || 'Lax',
-        }));
+        return parsed.map((c) => {
+          let sameSite = c.sameSite;
+          if (!sameSite || sameSite.toLowerCase() === 'unspecified') {
+            sameSite = 'Lax';
+          } else {
+            sameSite = sameSite.charAt(0).toUpperCase() + sameSite.slice(1).toLowerCase();
+            if (!['Lax', 'Strict', 'None'].includes(sameSite)) {
+              sameSite = 'Lax';
+            }
+          }
+          return {
+            name: c.name,
+            value: c.value,
+            domain: c.domain || domain,
+            path: c.path || '/',
+            secure: c.secure ?? true,
+            httpOnly: c.httpOnly ?? false,
+            sameSite: sameSite,
+          };
+        });
       }
     } catch {}
   }
