@@ -3,6 +3,20 @@
   cleanOverlays: true,
   run: function() {
     try {
+      // Clean flying ads if enabled in settings
+      if (typeof removeOuoAdsSetting !== 'undefined' && removeOuoAdsSetting) {
+        document.querySelectorAll('div, a, iframe, span').forEach((el) => {
+          if (el.closest('#form-captcha') || el.closest('#form-go')) return;
+          const style = window.getComputedStyle(el);
+          if (style.position === 'fixed' || style.position === 'absolute') {
+            if (el.querySelector('.cf-turnstile') || el.classList.contains('cf-turnstile')) return;
+            console.log('[pahe-auto] [ouo.io] Removed flying/floating ad element');
+            el.style.display = 'none';
+            el.remove();
+          }
+        });
+      }
+
       // Page 2: countdown / redirect
       const goForm = document.getElementById('form-go');
       if (goForm && !window.__done) {

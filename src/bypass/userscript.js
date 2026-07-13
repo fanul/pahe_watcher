@@ -59,6 +59,8 @@ export const AD_HOSTS = [
 // Combine them into a single self-contained string to inject into pages
 export function getInjectedAutomationScript(config = {}) {
   const injectOuo = config.bypass?.injectOuoScript !== false;
+  const speedUpPahe = config.bypass?.speedUpPahe !== false;
+  const removeOuoAds = config.bypass?.removeOuoAds !== false;
   return `
   (function() {
     'use strict';
@@ -74,6 +76,8 @@ export function getInjectedAutomationScript(config = {}) {
       console.log('[pahe-auto] Userscript injection is disabled for ouo.io');
       return;
     }
+
+    const removeOuoAdsSetting = ${removeOuoAds};
 
     const o = window.location.origin;
     const startTime = Date.now();
@@ -191,15 +195,59 @@ export function getInjectedAutomationScript(config = {}) {
 
     // Speedup
     const userExclusions = window.__paheSpeedUpExclusions || [];
-    const shouldSpeedUp = activeRule.speedup && !userExclusions.some(s => site.includes(s));
-    if (shouldSpeedUp) {
+    const activeSpeedUp = activeRule.speedup;
+    const speedUpPaheSetting = ${speedUpPahe};
+    const isPaheDomain = /pahe\\.plus|old\\.pahe\\.plus/i.test(site);
+    const needsTimerOverride = activeSpeedUp || (isPaheDomain && speedUpPaheSetting);
+    
+    if (needsTimerOverride) {
       try {
         const oT = window.setTimeout.bind(window);
         const oI = window.setInterval.bind(window);
-        window.setTimeout = (cb, d, ...a) => oT(cb, (d || 0) / 50, ...a);
-        window.setInterval = (cb, d, ...a) => oI(cb, (d || 0) / 50, ...a);
-        console.log('[pahe-auto] 50x Timer speedup enabled');
-      } catch {}
+        
+        window.setTimeout = (cb, d, ...a) => {
+          let divisor = 1;
+          const excluded = userExclusions.some(s => site.includes(s));
+          if (!excluded) {
+            if (activeSpeedUp) {
+              divisor = 50;
+            } else if (isPaheDomain && speedUpPaheSetting) {
+              const hasReadyText = document.body && (
+                document.body.innerText.includes('almost ready') || 
+                document.body.innerText.includes('almost') || 
+                document.body.innerText.includes('ready')
+              );
+              if (isCaptchaSolved() || hasReadyText) {
+                divisor = 50;
+              }
+            }
+          }
+          return oT(cb, (d || 0) / divisor, ...a);
+        };
+        
+        window.setInterval = (cb, d, ...a) => {
+          let divisor = 1;
+          const excluded = userExclusions.some(s => site.includes(s));
+          if (!excluded) {
+            if (activeSpeedUp) {
+              divisor = 50;
+            } else if (isPaheDomain && speedUpPaheSetting) {
+              const hasReadyText = document.body && (
+                document.body.innerText.includes('almost ready') || 
+                document.body.innerText.includes('almost') || 
+                document.body.innerText.includes('ready')
+              );
+              if (isCaptchaSolved() || hasReadyText) {
+                divisor = 50;
+              }
+            }
+          }
+          return oI(cb, (d || 0) / divisor, ...a);
+        };
+        console.log('[pahe-auto] Dynamic timer speedup interceptors installed');
+      } catch (err) {
+        console.error('[pahe-auto] Failed to install speedup: ' + err.message);
+      }
     }
 
     const tick = () => {

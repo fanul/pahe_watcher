@@ -67,6 +67,8 @@ export function loadConfig() {
       tabPruningWhitelist: envStr('BYPASS_TAB_PRUNING_WHITELIST', (d.bypass.tabPruningWhitelist || []).join(',')).split(',').map(s => s.trim()).filter(Boolean),
       pruneAdTabs: envStr('BYPASS_PRUNE_AD_TABS', String(d.bypass.pruneAdTabs)) === 'true',
       injectOuoScript: envStr('BYPASS_INJECT_OUO_SCRIPT', String(d.bypass.injectOuoScript)) === 'true',
+      speedUpPahe: envStr('BYPASS_SPEEDUP_PAHE', String(d.bypass.speedUpPahe)) === 'true',
+      removeOuoAds: envStr('BYPASS_REMOVE_OUO_ADS', String(d.bypass.removeOuoAds)) === 'true',
       stealth: {
         disableAutomationFlag: envStr('BYPASS_STEALTH_DISABLE_AUTOMATION_FLAG', String(d.bypass.stealth?.disableAutomationFlag)) !== 'false',
         useStealthUserAgent: envStr('BYPASS_STEALTH_USE_STEALTH_USER_AGENT', String(d.bypass.stealth?.useStealthUserAgent)) !== 'false',

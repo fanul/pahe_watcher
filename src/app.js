@@ -114,6 +114,8 @@ export async function createApp() {
           tabPruningWhitelist: runtime.bypass.tabPruningWhitelist,
           pruneAdTabs: runtime.bypass.pruneAdTabs,
           injectOuoScript: runtime.bypass.injectOuoScript,
+          speedUpPahe: runtime.bypass.speedUpPahe,
+          removeOuoAds: runtime.bypass.removeOuoAds,
         },
         sheets: {
           sheetId: runtime.sheets.sheetId,
@@ -172,7 +174,9 @@ export async function createApp() {
           patch.bypass.speedUpExclusions !== undefined ||
           patch.bypass.tabPruningWhitelist !== undefined ||
           patch.bypass.pruneAdTabs !== undefined ||
-          patch.bypass.injectOuoScript !== undefined
+          patch.bypass.injectOuoScript !== undefined ||
+          patch.bypass.speedUpPahe !== undefined ||
+          patch.bypass.removeOuoAds !== undefined
         ) {
           await bypass.close().catch(() => {});
           bypass.browser.headless = runtime.bypass.browserMode !== 'headful';

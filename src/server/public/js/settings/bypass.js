@@ -7,6 +7,8 @@ export function populateBypassSettings(form, cfg) {
   form.tabPruningWhitelist.value = (cfg.bypass.tabPruningWhitelist || []).join(', ');
   form.pruneAdTabs.checked = cfg.bypass.pruneAdTabs === true;
   form.injectOuoScript.checked = cfg.bypass.injectOuoScript !== false;
+  form.speedUpPahe.checked = cfg.bypass.speedUpPahe !== false;
+  form.removeOuoAds.checked = cfg.bypass.removeOuoAds !== false;
 
   const stealth = cfg.bypass.stealth || {};
   form.stealth_disableAutomationFlag.checked = stealth.disableAutomationFlag !== false;
@@ -25,6 +27,8 @@ export function serializeBypassSettings(form) {
     tabPruningWhitelist: splitList(form.tabPruningWhitelist.value),
     pruneAdTabs: form.pruneAdTabs.checked,
     injectOuoScript: form.injectOuoScript.checked,
+    speedUpPahe: form.speedUpPahe.checked,
+    removeOuoAds: form.removeOuoAds.checked,
     stealth: {
       disableAutomationFlag: form.stealth_disableAutomationFlag.checked,
       useStealthUserAgent: form.stealth_useStealthUserAgent.checked,
