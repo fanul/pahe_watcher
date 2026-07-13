@@ -1,22 +1,38 @@
 {
-  speedup: true,
+  speedup: false, // Turnstile requires normal timer speed to prevent crashes
   cleanOverlays: true,
   run: function() {
     try {
-      const goForm = document.getElementById('go-link');
+      // Page 2: countdown / redirect
+      const goForm = document.getElementById('form-go');
       if (goForm && !window.__done) {
         window.__done = true;
-        console.log('[pahe-auto] [ouo.io] Page 2 detected. Submitting countdown form: #go-link');
+        console.log('[pahe-auto] [ouo.io] Page 2 detected. Submitting countdown form: #form-go');
         formSubmit(goForm);
         return;
       }
+
+      // Page 1: "I'm a human" with Turnstile
       const captchaForm = document.getElementById('form-captcha');
       if (captchaForm && !window.__done) {
         const cfres = document.querySelector('[name="cf-turnstile-response"]');
         if (cfres && cfres.value) {
           window.__done = true;
-          console.log('[pahe-auto] [ouo.io] Page 1 solved. Submitting form: #form-captcha');
+          console.log('[pahe-auto] [ouo.io] Page 1 solved (Turnstile token present). Submitting form: #form-captcha');
           formSubmit(captchaForm);
+        } else {
+          // Fallback: click human verification button if it needs manual click triggers
+          const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
+          for (const btn of buttons) {
+            const text = (btn.textContent || btn.value || '').toLowerCase().trim();
+            if ((text.includes('human') || text.includes('verify') || text.includes('not a robot')) &&
+                btn.offsetParent !== null && !btn.disabled && !window.__clickedHuman) {
+              window.__clickedHuman = true;
+              console.log('[pahe-auto] [ouo.io] Page 1: Clicking human verification button: ' + text);
+              btn.click();
+              break;
+            }
+          }
         }
       }
     } catch (err) {
