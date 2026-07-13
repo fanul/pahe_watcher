@@ -69,91 +69,167 @@ export function pageAutomation() {
   window.__paheAuto = true;
 
   const site = window.location.hostname.replace(/^www\./, '');
+  const o = window.location.origin;
+  const startTime = Date.now();
+
   console.log(`[pahe-auto] Userscript loaded on ${window.location.href}`);
 
-  // ── speed up the countdown timers the ad pages use ──
-  try {
-    const noSpeed = window.__paheSpeedUpExclusions || ['oii.la', 'linegee.net', 'tpi.li', 'pahe.plus', 'ouo.io', 'ouo.press'];
-    if (!noSpeed.some((s) => site.includes(s))) {
+  // ==========================================
+  // DOMAIN-SPECIFIC BEHAVIOR RULES
+  // ==========================================
+  const DOMAIN_RULES = {
+    // ------------------------------------------
+    // SEGMENT 1: teknoasian.com (Speed up, clean overlays, auto verification clicks)
+    // ------------------------------------------
+    'teknoasian.com': {
+      speedup: true,
+      cleanOverlays: true,
+      run: () => {
+        if (document.readyState !== 'complete' && document.readyState !== 'interactive') return;
+        try {
+          const verify = document.querySelector('.humanVerify .verify');
+          if (verify && window.__t1 !== true) {
+            window.__t1 = true;
+            console.log('[pahe-auto] [teknoasian] Clicking .humanVerify .verify');
+            verify.scrollIntoView({ block: 'center' });
+            verify.click();
+          }
+          const skip = document.querySelector('.Skipper > .skipcontent');
+          if (skip && window.__t2 !== true) {
+            window.__t2 = true;
+            console.log('[pahe-auto] [teknoasian] Skipper button found. Clicking skip in 200ms.');
+            setTimeout(() => skip.click(), 200);
+          }
+          const postnext = document.querySelector('.postnext');
+          if (postnext && window.__t3 !== true) {
+            window.__t3 = true;
+            const form = postnext.closest('form');
+            if (form) {
+              console.log('[pahe-auto] [teknoasian] Submitting Skipper form in 150ms.');
+              setTimeout(() => form.submit(), 150);
+            }
+          }
+        } catch (err) {
+          console.error(`[pahe-auto] Error in teknoasian handler: ${err.message}`);
+        }
+      }
+    },
+
+    // ------------------------------------------
+    // SEGMENT 2: pahe.plus & old.pahe.plus (100% PLAIN, do NOT touch DOM, let user solve hCaptcha natively)
+    // ------------------------------------------
+    'pahe.plus': {
+      speedup: false,
+      cleanOverlays: false, // Keep DOM completely pristine to avoid triggering sensitive hCaptcha security blocks
+      run: () => {
+        console.log('[pahe-auto] [pahe.plus] Running in 100% plain mode. DOM is untouched.');
+      }
+    },
+    'old.pahe.plus': {
+      speedup: false,
+      cleanOverlays: false,
+      run: () => {
+        console.log('[pahe-auto] [old.pahe.plus] Running in 100% plain mode. DOM is untouched.');
+      }
+    },
+
+    // ------------------------------------------
+    // SEGMENT 3: ouo.io & ouo.press (Cloudflare Turnstile, remove fake captcha ads, submit forms when solved)
+    // ------------------------------------------
+    'ouo.io': {
+      speedup: false,
+      cleanOverlays: true, // We must clean up fake yellow moving boxes
+      run: () => {
+        try {
+          // Page 2: countdown / redirect
+          const goForm = document.getElementById('go-link');
+          if (goForm && !window.__done) {
+            window.__done = true;
+            console.log(`[pahe-auto] [ouo.io] Page 2 detected. Submitting countdown form: #go-link`);
+            formSubmit(goForm);
+            return;
+          }
+
+          // Page 1: "I'm a human" with Turnstile
+          const captchaForm = document.getElementById('form-captcha');
+          if (captchaForm && !window.__done) {
+            const cfres = document.querySelector('[name="cf-turnstile-response"]');
+            if (cfres && cfres.value) {
+              window.__done = true;
+              console.log(`[pahe-auto] [ouo.io] Page 1 solved (Turnstile token present). Submitting form: #form-captcha`);
+              formSubmit(captchaForm);
+            }
+          }
+        } catch (err) {
+          console.error(`[pahe-auto] Error in ouo.io handler: ${err.message}`);
+        }
+      }
+    },
+    'ouo.press': {
+      speedup: false,
+      cleanOverlays: true,
+      run: () => {
+        // Reuse ouo.io handler
+        DOMAIN_RULES['ouo.io'].run();
+      }
+    }
+  };
+
+  // Determine active rule matching current domain
+  const getActiveRule = () => {
+    for (const key of Object.keys(DOMAIN_RULES)) {
+      if (site.includes(key)) return DOMAIN_RULES[key];
+    }
+    // DEFAULT/FALLBACK RULE (for other domains: oii.la, linegee.net, wordcounter.icu, etc.)
+    return {
+      speedup: true,
+      cleanOverlays: true,
+      run: () => {
+        try {
+          fallbackResolvers();
+        } catch (err) {
+          console.error(`[pahe-auto] Error in fallback resolver: ${err.message}`);
+        }
+      }
+    };
+  };
+
+  const activeRule = getActiveRule();
+
+  // ==========================================
+  // TIMER SPEEDUP INITIATION
+  // ==========================================
+  const userExclusions = window.__paheSpeedUpExclusions || [];
+  const shouldSpeedUp = activeRule.speedup && !userExclusions.some(s => site.includes(s));
+  if (shouldSpeedUp) {
+    try {
       const oT = window.setTimeout.bind(window);
       const oI = window.setInterval.bind(window);
       window.setTimeout = (cb, d, ...a) => oT(cb, (d || 0) / 50, ...a);
       window.setInterval = (cb, d, ...a) => oI(cb, (d || 0) / 50, ...a);
-    } else {
-      console.log(`[pahe-auto] Speedup disabled for domain: ${site}`);
-    }
-  } catch {}
-
-  function clearOnclickAds() {
-    try {
-      document.querySelectorAll('*[onclick*="window.open"]').forEach((n) => n.removeAttribute('onclick'));
-      document.querySelectorAll('*[href*="https:///"]').forEach((n) => n.removeAttribute('href'));
-    } catch {}
-  }
-
-  // ── per-host auto-advance logic (ported from the userscript click funcs) ──
-  function clickLinks() {
-    try {
-      const o = window.location.origin;
-      if (/pahe\.plus|oii\.la|tpi\.li/.test(o)) {
-        const b = document.querySelector('.get-link:not(.disabled)');
-        if (b && b.href && !window.__done) {
-          window.__done = true;
-          window.location.assign(b.href);
-        }
-      } else if (/wp2hostt\.com/.test(o)) {
-        const b = document.querySelector('button#getlink');
-        if (b && !window.__done) { window.__done = true; b.click(); }
-      } else if (/linegee\.net/.test(o) && document.readyState === 'complete') {
-        document.querySelectorAll('script').forEach((s) => {
-          if (/location\.href.*atob/.test(s.textContent) && !window.__done) {
-            const b64 = s.textContent.replace(/[\t\s]/g, '').replace(/^.*location.href.*atob\('(.*)'\).*/, '$1');
-            window.__done = true;
-            setTimeout(() => { window.location.href = window.location.href + atob(b64); }, 200);
-          }
-        });
-      } else if (/ouo\.(io|press)/.test(o)) {
-        // Page 2: countdown / redirect
-        const goForm = document.getElementById('go-link');
-        if (goForm && !window.__done) {
-          window.__done = true;
-          console.log(`[pahe-auto] ouo.io Page 2 detected. Submitting form: #go-link`);
-          formSubmit(goForm);
-          return;
-        }
-
-        // Page 1: "I'm a human" with Turnstile
-        const captchaForm = document.getElementById('form-captcha');
-        if (captchaForm && !window.__done) {
-          const cfres = document.querySelector('[name="cf-turnstile-response"]');
-          if (cfres && cfres.value) {
-            window.__done = true;
-            console.log(`[pahe-auto] ouo.io Page 1 solved (Turnstile token present). Submitting form: #form-captcha`);
-            formSubmit(captchaForm);
-          }
-        }
-      }
-
-      if (/wordcounter\.icu/.test(o) && document.readyState === 'complete') {
-        const c = document.querySelector('#invisibleCaptchaShortlink');
-        if (c && !window.__d1) {
-          window.__d1 = true;
-          console.log(`[pahe-auto] Clicked #invisibleCaptchaShortlink on wordcounter.icu`);
-          c.click();
-        }
-        const g = document.querySelector('a.get-link[href]:not(.disabled)');
-        if (g && !window.__d2) {
-          window.__d2 = true;
-          console.log(`[pahe-auto] Redirecting to: ${g.href} on wordcounter.icu`);
-          window.location.assign(g.href);
-        }
-      }
+      console.log(`[pahe-auto] 50x Timer speedup enabled for ${site}`);
     } catch (err) {
-      console.error(`[pahe-auto] Error in clickLinks(): ${err.message}`);
+      console.error(`[pahe-auto] Failed to initialize timer speedup: ${err.message}`);
     }
+  } else {
+    console.log(`[pahe-auto] Timer speedup disabled for ${site}`);
   }
 
-  // Safe wrapper to submit form and simulate standard submit
+  // ==========================================
+  // RESOLVER UTILITIES & HELPERS
+  // ==========================================
+  function isCaptchaSolved() {
+    try {
+      const hres = document.querySelector('[name="h-captcha-response"]');
+      const gres = document.querySelector('[name="g-recaptcha-response"]');
+      const cfres = document.querySelector('[name="cf-turnstile-response"]');
+      if (hres && hres.value) return true;
+      if (gres && gres.value) return true;
+      if (cfres && cfres.value) return true;
+    } catch {}
+    return false;
+  }
+
   function formSubmit(form) {
     try {
       const submitBtn = form.querySelector('[type="submit"], button:not([type])');
@@ -172,8 +248,68 @@ export function pageAutomation() {
     }
   }
 
+  function clearOnclickAds() {
+    try {
+      document.querySelectorAll('*[onclick*="window.open"]').forEach((n) => n.removeAttribute('onclick'));
+      document.querySelectorAll('*[href*="https:///"]').forEach((n) => n.removeAttribute('href'));
+    } catch {}
+  }
+
+  function fallbackResolvers() {
+    // 1. oii.la / tpi.li
+    if (/oii\.la|tpi\.li/.test(o)) {
+      pullButton();
+      const b = document.querySelector('.get-link:not(.disabled)');
+      if (b && b.href && !window.__done) {
+        window.__done = true;
+        console.log(`[pahe-auto] Redirecting to get-link: ${b.href}`);
+        window.location.assign(b.href);
+      }
+    }
+
+    // 2. wp2hostt.com
+    if (/wp2hostt\.com/.test(o)) {
+      const b = document.querySelector('button#getlink');
+      if (b && !window.__done) {
+        window.__done = true;
+        b.click();
+      }
+    }
+
+    // 3. linegee.net
+    if (/linegee\.net/.test(o) && document.readyState === 'complete') {
+      document.querySelectorAll('script').forEach((s) => {
+        if (/location\.href.*atob/.test(s.textContent) && !window.__done) {
+          const b64 = s.textContent.replace(/[\t\s]/g, '').replace(/^.*location.href.*atob\('(.*)'\).*/, '$1');
+          window.__done = true;
+          setTimeout(() => { window.location.href = window.location.href + atob(b64); }, 200);
+        }
+      });
+    }
+
+    // 4. wordcounter.icu
+    if (/wordcounter\.icu/.test(o) && document.readyState === 'complete') {
+      const c = document.querySelector('#invisibleCaptchaShortlink');
+      if (c && !window.__d1) {
+        window.__d1 = true;
+        console.log(`[pahe-auto] Clicked #invisibleCaptchaShortlink on wordcounter.icu`);
+        c.click();
+      }
+      const g = document.querySelector('a.get-link[href]:not(.disabled)');
+      if (g && !window.__d2) {
+        window.__d2 = true;
+        console.log(`[pahe-auto] Redirecting to: ${g.href} on wordcounter.icu`);
+        window.location.assign(g.href);
+      }
+    }
+
+    // 5. blogmystt.com
+    if (/blogmystt\.com/.test(o)) {
+      blogmysttAuto();
+    }
+  }
+
   function pullButton() {
-    if (site !== 'oii.la' && site !== 'tpi.li') return;
     try {
       const f = document.querySelector('form:not(.td-search-form):not(.go-link)');
       if (f && f.getAttribute('moved') !== 'true') {
@@ -201,36 +337,11 @@ export function pageAutomation() {
       if (first && window.__c1 !== true) { window.__c1 = true; first.click(); }
       if (second && window.__c2 !== true) { window.__c2 = true; second.click(); }
     } catch {}
-    // sora-style shortlink buttons
     try {
       const gen = document.querySelector('#generater.ready, #lite-start-sora-a');
       if (gen && window.__c3 !== true) { window.__c3 = true; gen.click(); }
       const show = document.querySelector('#showlink.ready, #lite-end-sora-button, #getnewlink');
       if (show && window.__c4 !== true) { window.__c4 = true; show.click(); }
-    } catch {}
-  }
-
-  function teknoasianAuto() {
-    if (site !== 'teknoasian.com') return;
-    if (document.readyState !== 'complete' && document.readyState !== 'interactive') return;
-    try {
-      const verify = document.querySelector('.humanVerify .verify');
-      if (verify && window.__t1 !== true) {
-        window.__t1 = true;
-        verify.scrollIntoView({ block: 'center' });
-        verify.click();
-      }
-      const skip = document.querySelector('.Skipper > .skipcontent');
-      if (skip && window.__t2 !== true) {
-        window.__t2 = true;
-        setTimeout(() => skip.click(), 200);
-      }
-      const postnext = document.querySelector('.postnext');
-      if (postnext && window.__t3 !== true) {
-        window.__t3 = true;
-        const form = postnext.closest('form');
-        if (form) setTimeout(() => form.submit(), 150);
-      }
     } catch {}
   }
 
@@ -288,13 +399,17 @@ export function pageAutomation() {
     } catch {}
   }
 
-  const startTime = Date.now();
+  // ==========================================
+  // TICK ROUTINE (CORE LOOP)
+  // ==========================================
   const tick = () => {
-    // 1. Continuously delete full-screen click-jacking overlays so users can click links/checkboxes
-    removeAdOverlays();
+    // 1. Clean overlays if allowed for this domain
+    if (activeRule.cleanOverlays) {
+      removeAdOverlays();
+    }
 
-    // 2. If the page has a captcha container AND we are on pahe.plus or ouo.io/ouo.press AND it is unsolved, abort completely to run plain
-    const isStealthDomain = /pahe\.plus|old\.pahe\.plus|ouo\.(io|press)/i.test(window.location.hostname);
+    // 2. Abort if captcha is unsolved (only for stealth domains like pahe or ouo)
+    const isStealthDomain = /pahe\.plus|old\.pahe\.plus|ouo\.(io|press)/i.test(site);
     if (
       isStealthDomain &&
       (document.querySelector('input[name="action"][value="captcha"]') ||
@@ -309,14 +424,11 @@ export function pageAutomation() {
     const delayMs = window.__paheDelayMs || 1500;
     if (Date.now() - startTime < delayMs) return;
 
+    // 4. Run active domain resolver routine
     clearOnclickAds();
-    clickLinks();
-    pullButton();
-    blogmysttAuto();
-    teknoasianAuto();
+    activeRule.run();
   };
 
-  // run frequently; pages redraw buttons unpredictably
   try { setInterval(tick, 30); } catch {}
   if (document.readyState !== 'loading') tick();
   document.addEventListener('readystatechange', tick);
