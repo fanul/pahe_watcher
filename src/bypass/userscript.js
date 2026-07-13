@@ -286,7 +286,10 @@ export function pageAutomation() {
 
   const startTime = Date.now();
   const tick = () => {
-    // If the page has a captcha container AND we are on pahe.plus or ouo.io/ouo.press AND it is unsolved, abort completely to run plain
+    // 1. Continuously delete full-screen click-jacking overlays so users can click links/checkboxes
+    removeAdOverlays();
+
+    // 2. If the page has a captcha container AND we are on pahe.plus or ouo.io/ouo.press AND it is unsolved, abort completely to run plain
     const isStealthDomain = /pahe\.plus|old\.pahe\.plus|ouo\.(io|press)/i.test(window.location.hostname);
     if (
       isStealthDomain &&
@@ -298,10 +301,7 @@ export function pageAutomation() {
       return;
     }
 
-    // Continuously delete full-screen click-jacking overlays so users can click links/checkboxes
-    removeAdOverlays();
-
-    // 1. Initial page load delay setting (safeguards initialization)
+    // 3. Initial page load delay setting (safeguards initialization)
     const delayMs = window.__paheDelayMs || 1500;
     if (Date.now() - startTime < delayMs) return;
 
