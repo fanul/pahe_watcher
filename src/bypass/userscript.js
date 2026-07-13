@@ -56,25 +56,31 @@ export const AD_HOSTS = [
   'hostzteam.com',
   'devsoftwr.com',
   'zpserver.com',
+  'ouo.io',
+  'ouo.press',
 ];
 
 /** The function injected into the page. Kept as a Function so Playwright can
  *  serialize it. Do not reference anything outside its own body. */
 export function pageAutomation() {
   'use strict';
+  if (window.self !== window.top) return; // Only run in the main document context, ignore all iframes!
   if (window.__paheAuto) return;
   window.__paheAuto = true;
 
   const site = window.location.hostname.replace(/^www\./, '');
+  console.log(`[pahe-auto] Userscript loaded on ${window.location.href}`);
 
   // ── speed up the countdown timers the ad pages use ──
   try {
-    const noSpeed = ['oii.la', 'linegee.net', 'tpi.li', 'pahe.plus'];
+    const noSpeed = ['oii.la', 'linegee.net', 'tpi.li', 'pahe.plus', 'ouo.io', 'ouo.press', 'teknoasian.com'];
     if (!noSpeed.some((s) => site.includes(s))) {
       const oT = window.setTimeout.bind(window);
       const oI = window.setInterval.bind(window);
       window.setTimeout = (cb, d, ...a) => oT(cb, (d || 0) / 50, ...a);
       window.setInterval = (cb, d, ...a) => oI(cb, (d || 0) / 50, ...a);
+    } else {
+      console.log(`[pahe-auto] Speedup disabled for domain: ${site}`);
     }
   } catch {}
 
@@ -106,15 +112,60 @@ export function pageAutomation() {
             setTimeout(() => { window.location.href = window.location.href + atob(b64); }, 200);
           }
         });
+      } else if (/ouo\.(io|press)/.test(o)) {
+        // Page 2: countdown / redirect
+        const goForm = document.getElementById('go-link');
+        if (goForm && !window.__done) {
+          window.__done = true;
+          console.log(`[pahe-auto] ouo.io Page 2 detected. Submitting form: #go-link`);
+          formSubmit(goForm);
+          return;
+        }
+
+        // Page 1: "I'm a human" with Turnstile
+        const captchaForm = document.getElementById('form-captcha');
+        if (captchaForm && !window.__done) {
+          const cfres = document.querySelector('[name="cf-turnstile-response"]');
+          if (cfres && cfres.value) {
+            window.__done = true;
+            console.log(`[pahe-auto] ouo.io Page 1 solved (Turnstile token present). Submitting form: #form-captcha`);
+            formSubmit(captchaForm);
+          }
+        }
       }
 
       if (/wordcounter\.icu/.test(o) && document.readyState === 'complete') {
         const c = document.querySelector('#invisibleCaptchaShortlink');
-        if (c && !window.__d1) { window.__d1 = true; c.click(); }
+        if (c && !window.__d1) {
+          window.__d1 = true;
+          console.log(`[pahe-auto] Clicked #invisibleCaptchaShortlink on wordcounter.icu`);
+          c.click();
+        }
         const g = document.querySelector('a.get-link[href]:not(.disabled)');
-        if (g && !window.__d2) { window.__d2 = true; window.location.assign(g.href); }
+        if (g && !window.__d2) {
+          window.__d2 = true;
+          console.log(`[pahe-auto] Redirecting to: ${g.href} on wordcounter.icu`);
+          window.location.assign(g.href);
+        }
       }
-    } catch {}
+    } catch (err) {
+      console.error(`[pahe-auto] Error in clickLinks(): ${err.message}`);
+    }
+  }
+
+  // Safe wrapper to submit form and simulate standard submit
+  function formSubmit(form) {
+    try {
+      const submitBtn = form.querySelector('[type="submit"], button:not([type])');
+      if (submitBtn) {
+        submitBtn.removeAttribute('disabled');
+        submitBtn.click();
+      } else {
+        form.submit();
+      }
+    } catch {
+      form.submit();
+    }
   }
 
   function pullButton() {
@@ -179,7 +230,81 @@ export function pageAutomation() {
     } catch {}
   }
 
+  function removeAdOverlays() {
+    try {
+      const elements = document.querySelectorAll('div, a, span');
+      elements.forEach((el) => {
+        try {
+          const attrStr = ((el.className || '') + ' ' + (el.id || '') + ' ' + (el.getAttribute('style') || '')).toLowerCase();
+          
+          // Detect and delete fake, moving ad captcha iframe containers (checking src/srcdoc)
+          const iframe = el.querySelector('iframe');
+          if (iframe) {
+            const src = (iframe.src || '').toLowerCase();
+            const srcdoc = (iframe.getAttribute('srcdoc') || '').toLowerCase();
+            if (
+              src.includes('pingelethal.cfd') || 
+              srcdoc.includes('pingelethal.cfd') ||
+              srcdoc.includes("i'm not a robot") ||
+              srcdoc.includes("captcha_checkbox") ||
+              srcdoc.includes("show content")
+            ) {
+              console.log('[pahe-auto] Detected and removed fake captcha ad overlay');
+              el.style.display = 'none';
+              el.remove();
+              return;
+            }
+          }
+
+          if (
+            attrStr.includes('hcaptcha') || 
+            attrStr.includes('recaptcha') || 
+            attrStr.includes('turnstile') || 
+            attrStr.includes('captcha')
+          ) {
+            return;
+          }
+
+          const style = window.getComputedStyle(el);
+          if (
+            (style.position === 'fixed' || style.position === 'absolute') &&
+            parseInt(style.zIndex, 10) > 100 &&
+            (style.width === '100%' || style.width.includes('100vw') || el.offsetWidth >= window.innerWidth * 0.9) &&
+            (style.height === '100%' || style.height.includes('100vh') || el.offsetHeight >= window.innerHeight * 0.9)
+          ) {
+            const hasText = el.textContent.trim().length > 0;
+            const hasInput = el.querySelector('input, button, select, textarea, iframe') !== null;
+            if (!hasText && !hasInput) {
+              el.style.display = 'none';
+              el.remove();
+            }
+          }
+        } catch {}
+      });
+    } catch {}
+  }
+
+  const startTime = Date.now();
   const tick = () => {
+    // If the page has a captcha container AND we are on pahe.plus or ouo.io/ouo.press AND it is unsolved, abort completely to run plain
+    const isStealthDomain = /pahe\.plus|old\.pahe\.plus|ouo\.(io|press)/i.test(window.location.hostname);
+    if (
+      isStealthDomain &&
+      (document.querySelector('input[name="action"][value="captcha"]') ||
+       document.querySelector('.h-captcha, .g-recaptcha, #captchaShortlink, #captcha, #recaptcha, .cf-turnstile') ||
+       window.hcaptcha || window.grecaptcha || window.turnstile) &&
+      !isCaptchaSolved()
+    ) {
+      return;
+    }
+
+    // Continuously delete full-screen click-jacking overlays so users can click links/checkboxes
+    removeAdOverlays();
+
+    // 1. Initial page load delay setting (safeguards initialization)
+    const delayMs = window.__paheDelayMs || 1500;
+    if (Date.now() - startTime < delayMs) return;
+
     clearOnclickAds();
     clickLinks();
     pullButton();

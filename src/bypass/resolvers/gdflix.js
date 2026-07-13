@@ -41,11 +41,89 @@ export function classifyFinalLink(url) {
   return 'direct';
 }
 
+function parseCookieString(cookieStr, domain) {
+  if (!cookieStr) return [];
+  // If it's JSON array, parse directly
+  if (cookieStr.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(cookieStr);
+      if (Array.isArray(parsed)) {
+        return parsed.map((c) => ({
+          name: c.name,
+          value: c.value,
+          domain: c.domain || domain,
+          path: c.path || '/',
+          secure: c.secure ?? true,
+          httpOnly: c.httpOnly ?? false,
+          sameSite: c.sameSite || 'Lax',
+        }));
+      }
+    } catch {}
+  }
+
+  // Semicolon separated string
+  return cookieStr
+    .split(';')
+    .map((pair) => {
+      const parts = pair.split('=');
+      const name = parts[0]?.trim();
+      const value = parts.slice(1).join('=')?.trim();
+      if (!name || !value) return null;
+      return {
+        name,
+        value,
+        domain: domain.startsWith('.') ? domain : `.${domain}`,
+        path: '/',
+        secure: true,
+        httpOnly: false,
+        sameSite: 'Lax',
+      };
+    })
+    .filter(Boolean);
+}
+
 /**
- * Ensure the GDFlix session is logged in (if credentials are configured).
+ * Ensure the GDFlix session is logged in (if credentials/cookies are configured).
  * Many GDFlix mirrors work without login; this is best-effort.
  */
-export async function ensureGdflixLogin(page, { email, password }, ctx = {}) {
+export async function ensureGdflixLogin(page, credentials, ctx = {}) {
+  const { email, password, cookies } = credentials || {};
+
+  if (cookies) {
+    try {
+      const hostname = new URL(page.url()).hostname;
+      const parts = hostname.split('.');
+      const domain = parts.slice(-2).join('.'); // e.g. gdflix.co or gdflix.to
+      const parsed = parseCookieString(cookies, domain);
+      
+      if (parsed.length > 0) {
+        ctx.log?.(`Injecting ${parsed.length} GDFlix session cookies...`);
+        await page.context().addCookies(parsed);
+        
+        // Check if we need to reload to apply injected cookies
+        const needsReload = await page.evaluate(() => {
+          return !!(document.querySelector('input[type="password"]') || document.querySelector('a[href*="login"]'));
+        });
+        if (needsReload) {
+          ctx.log?.('Reloading GDFlix page to apply session cookies...');
+          await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        }
+
+        const needsLoginAfter = await page.evaluate(() => {
+          return !!(document.querySelector('input[type="password"]') || document.querySelector('a[href*="login"]'));
+        });
+        if (!needsLoginAfter) {
+          ctx.log?.('GDFlix authenticated successfully via cookies.');
+          return { loggedIn: true };
+        } else {
+          ctx.log?.('GDFlix cookie login failed or session expired. Falling back to credentials...');
+        }
+      }
+    } catch (err) {
+      log.warn('GDFlix cookie injection failed', { error: String(err) });
+    }
+  }
+
   if (!email || !password) return { loggedIn: false, skipped: true };
   try {
     const needsLogin = await page.$('input[type="password"], a[href*="login"]');

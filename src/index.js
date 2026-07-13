@@ -2,6 +2,7 @@
 import { createApp } from './app.js';
 import { createServer } from './server/server.js';
 import { createLogger } from './core/logger.js';
+import { startServices, stopServices } from './core/serviceManager.js';
 
 const log = createLogger('main');
 
@@ -16,6 +17,9 @@ async function main() {
   const args = new Set(process.argv.slice(2));
   const app = await createApp();
 
+  // Start FlareSolverr and ByParr if enabled
+  await startServices(app.runtime);
+
   if (args.has('--once')) {
     log.info('Running single poll cycle (--once)');
     const result = await app.watcher.poll();
@@ -23,6 +27,7 @@ async function main() {
     // give queued jobs a chance to run to completion
     await waitForQueueDrain(app, 10 * 60 * 1000);
     await app.shutdown();
+    await stopServices();
     process.exit(0);
   }
 
@@ -39,6 +44,7 @@ async function main() {
 
   const shutdown = async () => {
     await app.shutdown();
+    await stopServices();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

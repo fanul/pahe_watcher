@@ -96,6 +96,14 @@ export class Store {
     this._scheduleFlush();
     return this.data.jobs[job.id];
   }
+  deleteJob(id) {
+    if (this.data.jobs[id]) {
+      delete this.data.jobs[id];
+      this._scheduleFlush();
+      return true;
+    }
+    return false;
+  }
   getJob(id) {
     return this.data.jobs[id] || null;
   }

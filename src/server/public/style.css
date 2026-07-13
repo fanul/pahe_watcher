@@ -102,11 +102,33 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 .logline .warn { color: var(--amber); } .logline .error { color: var(--red); }
 .logline .scope { color: var(--purple); }
 
-dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; width: min(440px, 92vw); }
-dialog h3 { margin-top: 0; }
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; width: min(480px, 94vw); }
+dialog h3 { margin-top: 0; margin-bottom: 12px; }
 dialog label { display: block; margin: 10px 0; font-size: 13px; color: var(--muted); }
 dialog label.row { display: flex; align-items: center; gap: 8px; color: var(--text); }
-dialog input, dialog select { width: 100%; margin-top: 4px; padding: 7px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+dialog input, dialog select, dialog textarea { width: 100%; margin-top: 4px; padding: 7px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 13px; }
+dialog textarea { resize: vertical; min-height: 80px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
 dialog label.row input { width: auto; margin: 0; }
 dialog menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; }
 .actions { display: flex; gap: 6px; margin-top: 8px; }
+
+/* Custom fieldset, scrollable container, and hidden classes */
+.hidden { display: none !important; }
+.settings-scroll-container { max-height: 60vh; overflow-y: auto; padding-right: 6px; }
+fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin: 0 0 16px 0; background: rgba(0, 0, 0, 0.1); }
+legend { font-size: 12px; font-weight: 700; color: var(--accent); padding: 0 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+.cfg-group { border-left: 2px solid var(--accent); padding-left: 10px; margin-top: 8px; }
+
+/* Tabs Layout & Controls */
+.tabs-header { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 12px; gap: 8px; }
+.tab-btn { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 8px 12px; font-size: 14px; font-weight: 600; cursor: pointer; outline: none; transition: all 0.2s; }
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.crawl-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; background: var(--panel-2); padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); }
+.crawl-controls label { display: flex; align-items: center; gap: 8px; }
+
+/* Custom Action Buttons */
+.muted-btn { background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); }
+.muted-btn:hover { color: var(--text); border-color: var(--muted); }
+.danger-btn { background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); color: #f87171; }
+.danger-btn:hover { background: rgba(239, 68, 68, 0.22); border-color: #ef4444; color: #ef4444; }

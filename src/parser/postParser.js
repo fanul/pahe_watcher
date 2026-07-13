@@ -121,17 +121,93 @@ function dedupe(options) {
 }
 
 /**
- * Filter parsed options by preferred providers and qualities (from config).
- * Empty preference arrays mean "accept all".
+ * Detects if a post is a series (based on title and parsed option labels).
  */
-export function selectOptions(options, { providers = [], qualities = [] } = {}) {
+export function checkIsSeries(postTitle, options) {
+  if (/season|episode|web-dl\s+\[ep|s\d+e\d+|\bs\d+\b/i.test(postTitle)) return true;
+  return (options || []).some((o) => {
+    const label = (o.qualityLabel || '').toLowerCase();
+    return /episode|ep|batch|complete/i.test(label);
+  });
+}
+
+function isBatchOption(option) {
+  const label = (option.qualityLabel || '').toLowerCase();
+  if (/batch|complete|pack|collection/i.test(label)) return true;
+  if (/\b\d+\s*-\s*\d+\b/.test(label)) return true; // e.g. "1-10" or "01-12"
+  return false;
+}
+
+function isEpisodeOption(option) {
+  const label = (option.qualityLabel || '').toLowerCase();
+  if (/(?:episode|ep)\s*\d+/i.test(label) && !/\b\d+\s*-\s*\d+\b/.test(label)) return true;
+  return false;
+}
+
+function getCodecRank(label, codecs) {
+  const l = (label || '').toLowerCase();
+  for (let i = 0; i < codecs.length; i++) {
+    const codec = codecs[i].toLowerCase();
+    if (l.includes(codec)) return i;
+  }
+  return codecs.length; // lowest preference rank
+}
+
+/**
+ * Filter parsed options by preferred providers, qualities, codecs, and series type.
+ * Deduplicates multiple codecs for the same provider/quality pair.
+ */
+export function selectOptions(options, { providers = [], qualities = [], codecs = ['x265', 'x264'], seriesType = 'batch', isSeries = false } = {}) {
   const wantP = providers.map((p) => p.toUpperCase());
   const wantQ = qualities.map((q) => q.toLowerCase());
-  return options.filter((o) => {
+
+  // 1. Filter by basic provider and quality
+  let filtered = options.filter((o) => {
     const pOk = wantP.length === 0 || wantP.includes(o.provider);
     const qOk = wantQ.length === 0 || (o.quality && wantQ.includes(o.quality));
     return pOk && qOk;
   });
+
+  // 2. Filter by series type if it's a series
+  if (isSeries) {
+    if (seriesType === 'batch') {
+      filtered = filtered.filter((o) => isBatchOption(o));
+    } else if (seriesType === 'episode') {
+      filtered = filtered.filter((o) => isEpisodeOption(o));
+    }
+  }
+
+  // 3. Deduplicate codecs for the same (provider, quality, episode) key
+  const groups = {};
+  for (const o of filtered) {
+    const epMatch = (o.qualityLabel || '').match(/(?:episode|ep)\s*(\d+)/i);
+    const epKey = epMatch ? `ep${epMatch[1]}` : '';
+    
+    // Group key example: "GD-720p-ep1" or "GD-1080p-"
+    const key = `${o.provider}-${o.quality || 'unknown'}-${epKey}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(o);
+  }
+
+  const result = [];
+  for (const key in groups) {
+    const list = groups[key];
+    if (list.length <= 1) {
+      result.push(...list);
+      continue;
+    }
+
+    // Sort by user's codec preference rank (lower index is better)
+    list.sort((a, b) => {
+      const rankA = getCodecRank(a.qualityLabel, codecs);
+      const rankB = getCodecRank(b.qualityLabel, codecs);
+      return rankA - rankB;
+    });
+
+    result.push(list[0]);
+  }
+
+  return result;
 }
 
 export default parseDownloadOptions;

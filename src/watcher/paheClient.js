@@ -41,6 +41,24 @@ export class PaheClient {
   }
 
   /**
+   * Fetch a specific page of posts.
+   * @param {number} page
+   * @param {number} perPage
+   * @returns {Promise<Array<{id,date,link,title}>>}
+   */
+  async getPostsPage(page = 1, perPage = 10) {
+    const url = `${this.baseUrl}/wp-json/wp/v2/posts?page=${page}&per_page=${perPage}&_fields=id,date,link,title,categories`;
+    const posts = await this._fetchJson(url);
+    return posts.map((p) => ({
+      id: p.id,
+      date: p.date,
+      link: p.link,
+      title: decodeEntities(p.title?.rendered || ''),
+      categories: p.categories || [],
+    }));
+  }
+
+  /**
    * Fetch a single post's rendered HTML content.
    * @returns {Promise<{id,title,link,date,contentHtml}>}
    */

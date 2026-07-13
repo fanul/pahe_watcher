@@ -161,6 +161,49 @@ export class JobQueue {
     }
   }
 
+  /** Delete a job from the queue and store. */
+  delete(jobId) {
+    this.pending = this.pending.filter((id) => id !== jobId);
+    const ok = this.store.deleteJob(jobId);
+    if (ok) {
+      bus.emit('job:deleted', jobId);
+      log.info(`Deleted job ${jobId.slice(0, 8)}`);
+    }
+    return ok;
+  }
+
+  /** Delete all jobs from the queue and store. */
+  clearAll() {
+    this.pending = [];
+    const jobs = this.store.listJobs();
+    for (const job of jobs) {
+      if (job.status === JobStatus.RUNNING) {
+        this.active.delete(job.id);
+      }
+      this.store.deleteJob(job.id);
+    }
+    bus.emit('jobs:cleared');
+    log.info('Cleared all jobs from queue');
+  }
+
+  /** Retry all failed/cancelled jobs in the queue. */
+  retryAll() {
+    const jobs = this.store.listJobs();
+    let count = 0;
+    for (const job of jobs) {
+      if ([JobStatus.FAILED, JobStatus.CANCELLED].includes(job.status)) {
+        this._update(job, { status: JobStatus.QUEUED, error: null });
+        this.pending.push(job.id);
+        count++;
+      }
+    }
+    if (count > 0) {
+      log.info(`Retrying all failed/cancelled jobs (${count})`);
+      this._drain();
+    }
+    return count;
+  }
+
   stats() {
     const jobs = this.store.listJobs();
     const by = (s) => jobs.filter((j) => j.status === s).length;

@@ -40,8 +40,41 @@ export class ManualSolver {
     bus.emit('captcha:needed', { requestId, jobId: ctx.jobId, url });
 
     const timeoutMs = 5 * 60 * 1000;
+    let onPageClose;
+    let interval;
+
     const solved = await new Promise((resolve) => {
+      onPageClose = () => {
+        log.warn('Page closed while waiting for manual captcha solving', { requestId });
+        resolve(false);
+      };
+      page.on('close', onPageClose);
+
       this._pending.set(requestId, () => resolve(true));
+
+      // Polling to automatically detect if the page redirected to GDFlix or a final host
+      const startUrl = page.url();
+      interval = setInterval(async () => {
+        try {
+          if (page.isClosed()) return;
+          const currentUrl = page.url();
+          // If the page redirected to a destination host, we successfully bypassed!
+          if (
+            currentUrl !== startUrl && 
+            (currentUrl.includes('gdflix') || 
+             currentUrl.includes('drive.google') || 
+             currentUrl.includes('pixeldrain') || 
+             currentUrl.includes('pixeldra.in') || 
+             currentUrl.includes('workers.dev') ||
+             currentUrl.includes('r2.cloudflarestorage') ||
+             currentUrl.includes('googleusercontent'))
+          ) {
+            log.info('Auto-detected captcha bypass success due to page navigation', { currentUrl });
+            resolve(true);
+          }
+        } catch {}
+      }, 1000);
+
       setTimeout(() => {
         if (this._pending.has(requestId)) {
           this._pending.delete(requestId);
@@ -49,6 +82,12 @@ export class ManualSolver {
         }
       }, timeoutMs);
     });
+
+    if (interval) clearInterval(interval);
+    if (onPageClose) {
+      page.off('close', onPageClose);
+    }
+    this._pending.delete(requestId);
 
     return { solved, method: 'manual', requestId };
   }

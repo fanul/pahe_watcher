@@ -55,7 +55,7 @@ export function createServer(app) {
   };
 
   // Fan out the events the GUI cares about.
-  for (const ev of ['log', 'post:new', 'job:created', 'job:updated', 'job:log', 'captcha:needed', 'sheet:appended', 'watcher:tick']) {
+  for (const ev of ['log', 'post:new', 'job:created', 'job:updated', 'job:log', 'captcha:needed', 'sheet:appended', 'watcher:tick', 'crawl:progress', 'job:deleted', 'jobs:cleared']) {
     bus.on(ev, (payload) => broadcast(ev, payload));
   }
 

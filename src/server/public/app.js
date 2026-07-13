@@ -60,6 +60,7 @@ function renderJobs() {
     const acts = [];
     if (['failed', 'cancelled'].includes(j.status)) acts.push(`<button class="btn small muted" data-retry="${j.id}">Retry</button>`);
     if (j.status === 'queued') acts.push(`<button class="btn small danger" data-cancel="${j.id}">Cancel</button>`);
+    if (['done', 'failed', 'cancelled'].includes(j.status)) acts.push(`<button class="btn small danger-btn" data-delete-job="${j.id}">Delete</button>`);
     return `<div class="card">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
         <div class="title">${esc(j.title || 'job')}</div>
@@ -109,6 +110,17 @@ function handleEvent(type, payload) {
     case 'captcha:needed': showCaptcha(payload); break;
     case 'watcher:tick': refreshStatusSoon(); break;
     case 'sheet:appended': refreshStatusSoon(); break;
+    case 'crawl:progress': updateCrawlProgress(payload); break;
+    case 'job:deleted':
+      state.jobs = state.jobs.filter((j) => j.id !== payload);
+      renderJobs();
+      refreshStatusSoon();
+      break;
+    case 'jobs:cleared':
+      state.jobs = [];
+      renderJobs();
+      refreshStatusSoon();
+      break;
   }
 }
 
@@ -156,6 +168,7 @@ document.body.addEventListener('click', async (e) => {
   if (t.dataset.resolvePost) { await api(`/posts/${t.dataset.resolvePost}/resolve`, { method: 'POST', body: '{}' }); refreshAll(); }
   if (t.dataset.retry) { await api(`/jobs/${t.dataset.retry}/retry`, { method: 'POST' }); refreshAll(); }
   if (t.dataset.cancel) { await api(`/jobs/${t.dataset.cancel}/cancel`, { method: 'POST' }); refreshAll(); }
+  if (t.dataset.deleteJob) { await api(`/jobs/${t.dataset.deleteJob}`, { method: 'DELETE' }); refreshAll(); }
   if (t.dataset.post != null && t.dataset.idx != null) {
     const post = state.posts.find((p) => String(p.id) === t.dataset.post);
     const opt = post?.options?.[+t.dataset.idx];
@@ -164,17 +177,59 @@ document.body.addEventListener('click', async (e) => {
 });
 
 // ── settings dialog ──
+const providerSelect = $('#captchaProviderSelect');
+const updateGroupVisibility = () => {
+  const val = providerSelect.value;
+  $('#cfg2Captcha').classList.toggle('hidden', val !== '2captcha');
+  $('#cfgFlareSolverr').classList.toggle('hidden', val !== 'flaresolverr');
+  $('#cfgByParr').classList.toggle('hidden', val !== 'byparr');
+};
+providerSelect.addEventListener('change', updateGroupVisibility);
+
 $('#btnSettings').onclick = async () => {
   const cfg = await api('/config');
   const f = $('#settingsForm');
   f.preferredProviders.value = cfg.watcher.preferredProviders.join(',');
   f.preferredQualities.value = cfg.watcher.preferredQualities.join(',');
+  f.preferredCodecs.value = (cfg.watcher.preferredCodecs || []).join(',');
+  f.preferredSeriesType.value = cfg.watcher.preferredSeriesType || 'batch';
   f.pollIntervalSeconds.value = cfg.watcher.pollIntervalSeconds;
   f.autoResolve.checked = cfg.watcher.autoResolve;
+  f.onlyCompleteSeries.checked = cfg.watcher.onlyCompleteSeries !== false;
   f.browserMode.value = cfg.bypass.browserMode;
+  f.initialPageDelaySeconds.value = cfg.bypass.initialPageDelaySeconds || 1.5;
+  f.speedUpExclusions.value = (cfg.bypass.speedUpExclusions || []).join(', ');
+
+  const stealth = cfg.bypass.stealth || {};
+  f.stealth_disableAutomationFlag.checked = stealth.disableAutomationFlag !== false;
+  f.stealth_useStealthUserAgent.checked = stealth.useStealthUserAgent !== false;
+  f.stealth_maskWebdriver.checked = stealth.maskWebdriver !== false;
+  f.stealth_blockAdsAndTrackers.checked = stealth.blockAdsAndTrackers !== false;
+  f.stealth_spoofCanvasFingerprint.checked = stealth.spoofCanvasFingerprint === true;
+  f.stealth_useNoSandbox.checked = stealth.useNoSandbox !== false;
+  
+  // New Google Sheets configuration fields
+  f.sheetId.value = cfg.sheets.sheetId || '';
+  f.serviceAccountKeyContent.value = cfg.sheets.serviceAccountKeyContent || '';
+  
+  // New Captcha configuration fields
+  f.captchaProvider.value = cfg.bypass.captchaProvider || 'none';
+  f.twoCaptchaApiKey.value = cfg.bypass.twoCaptchaApiKey || '';
+  f.flaresolverrUrl.value = cfg.bypass.flaresolverrUrl || '';
+  f.byparrUrl.value = cfg.bypass.byparrUrl || '';
+  f.startServicesOnStart.checked = cfg.bypass.startServicesOnStart !== false;
+  
+  // New GDFlix configuration fields
+  f.gdflixEmail.value = cfg.bypass.gdflixEmail || '';
+  f.gdflixPassword.value = cfg.bypass.gdflixPassword || '';
+  f.gdflixCookies.value = cfg.bypass.gdflixCookies || '';
+  
+  updateGroupVisibility();
+  
   $('#sheetInfo').textContent = cfg.sheets.configured ? `${cfg.sheets.sheetId} / ${cfg.sheets.tab}` : 'not configured';
   $('#settingsDialog').showModal();
 };
+
 $('#settingsForm').addEventListener('submit', async (e) => {
   if (e.submitter?.value !== 'save') return;
   const f = e.target;
@@ -182,10 +237,41 @@ $('#settingsForm').addEventListener('submit', async (e) => {
     watcher: {
       preferredProviders: splitList(f.preferredProviders.value),
       preferredQualities: splitList(f.preferredQualities.value),
+      preferredCodecs: splitList(f.preferredCodecs.value),
+      preferredSeriesType: f.preferredSeriesType.value,
+      onlyCompleteSeries: f.onlyCompleteSeries.checked,
       pollIntervalSeconds: +f.pollIntervalSeconds.value || 300,
       autoResolve: f.autoResolve.checked,
     },
-    bypass: { browserMode: f.browserMode.value },
+    bypass: {
+      browserMode: f.browserMode.value,
+      initialPageDelaySeconds: parseFloat(f.initialPageDelaySeconds.value) || 1.5,
+      speedUpExclusions: splitList(f.speedUpExclusions.value),
+      stealth: {
+        disableAutomationFlag: f.stealth_disableAutomationFlag.checked,
+        useStealthUserAgent: f.stealth_useStealthUserAgent.checked,
+        maskWebdriver: f.stealth_maskWebdriver.checked,
+        blockAdsAndTrackers: f.stealth_blockAdsAndTrackers.checked,
+        spoofCanvasFingerprint: f.stealth_spoofCanvasFingerprint.checked,
+        useNoSandbox: f.stealth_useNoSandbox.checked,
+      },
+      captcha: {
+        provider: f.captchaProvider.value,
+        twoCaptchaApiKey: f.twoCaptchaApiKey.value,
+        flaresolverrUrl: f.flaresolverrUrl.value,
+        byparrUrl: f.byparrUrl.value,
+        startServicesOnStart: f.startServicesOnStart.checked,
+      },
+      gdflix: {
+        email: f.gdflixEmail.value,
+        password: f.gdflixPassword.value,
+        cookies: f.gdflixCookies.value,
+      }
+    },
+    sheets: {
+      sheetId: f.sheetId.value,
+      serviceAccountKeyContent: f.serviceAccountKeyContent.value,
+    }
   };
   await api('/config', { method: 'PATCH', body: JSON.stringify(patch) });
   refreshAll();
@@ -205,6 +291,112 @@ function timeago(iso) {
   if (d < 3600) return `${Math.floor(d / 60)}m ago`;
   return `${Math.floor(d / 3600)}h ago`;
 }
+
+// ── tabs navigation ──
+const tabNewPosts = $('#tabNewPosts');
+const tabCrawl = $('#tabCrawl');
+const panelNewPosts = $('#panelNewPosts');
+const panelCrawl = $('#panelCrawl');
+
+tabNewPosts.onclick = () => {
+  tabNewPosts.classList.add('active');
+  tabCrawl.classList.remove('active');
+  panelNewPosts.classList.remove('hidden');
+  panelCrawl.classList.add('hidden');
+};
+
+tabCrawl.onclick = () => {
+  tabCrawl.classList.add('active');
+  tabNewPosts.classList.remove('active');
+  panelCrawl.classList.remove('hidden');
+  panelNewPosts.classList.add('hidden');
+};
+
+// ── crawl controller ──
+const btnStartCrawl = $('#btnStartCrawl');
+const crawlProgress = $('#crawlProgress');
+const crawlResults = $('#crawlResults');
+const crawlMaxPages = $('#crawlMaxPages');
+
+btnStartCrawl.onclick = async () => {
+  btnStartCrawl.disabled = true;
+  crawlProgress.textContent = 'Starting crawl...';
+  crawlResults.innerHTML = '<div class="muted">Crawling page 1. Please wait...</div>';
+  
+  try {
+    const res = await api('/watcher/crawl', {
+      method: 'POST',
+      body: JSON.stringify({ maxPages: +crawlMaxPages.value || 5 })
+    });
+    renderCrawlResults(res.results);
+  } catch (err) {
+    crawlProgress.textContent = 'Crawl failed.';
+    crawlResults.innerHTML = `<div class="card" style="color:var(--red)">Crawl error: ${esc(err.message)}</div>`;
+  } finally {
+    btnStartCrawl.disabled = false;
+  }
+};
+
+function updateCrawlProgress(payload) {
+  if (payload.status === 'running') {
+    crawlProgress.textContent = `Crawling page ${payload.page}/${payload.maxPages}...`;
+    crawlResults.innerHTML = `<div class="muted">Crawling page ${payload.page}/${payload.maxPages}. Please wait...</div>`;
+  } else if (payload.status === 'done') {
+    crawlProgress.textContent = `Crawl complete. Found ${payload.resultsCount} movies.`;
+  } else if (payload.status === 'error') {
+    crawlProgress.textContent = `Crawl error: ${payload.error}`;
+  }
+}
+
+function renderCrawlResults(results) {
+  if (!results || results.length === 0) {
+    crawlResults.innerHTML = '<div class="muted">No movies found in this range.</div>';
+    return;
+  }
+  
+  crawlResults.innerHTML = results.map(r => {
+    return `<div class="card">
+      <div class="title">${esc(r.title)}</div>
+      <div class="meta">Found on <b>Page ${r.pageFound}</b> · <a href="${r.link}" target="_blank" rel="noopener">post ↗</a></div>
+      <div class="actions">
+        <button class="btn small" data-resolve-post="${r.id}">Resolve preferred</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── bulk queue actions ──
+$('#btnRetryAllJobs').onclick = async () => {
+  if (confirm('Are you sure you want to retry all failed/cancelled jobs?')) {
+    await api('/queue/retry', { method: 'POST' });
+    refreshAll();
+  }
+};
+$('#btnClearAllJobs').onclick = async () => {
+  if (confirm('Are you sure you want to delete all jobs from the queue?')) {
+    await api('/queue/clear', { method: 'POST' });
+    refreshAll();
+  }
+};
+
+// ── manual job submit ──
+$('#manualJobForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const url = f.url.value.trim();
+  if (!url) return;
+  
+  try {
+    await api('/jobs', {
+      method: 'POST',
+      body: JSON.stringify({ url, title: 'Manual Link Submit', provider: 'Manual' })
+    });
+    f.url.value = '';
+    refreshAll();
+  } catch (err) {
+    alert(`Failed to add manual job: ${err.message}`);
+  }
+};
 
 // ── boot ──
 refreshAll().catch((e) => appendLog({ ts: '', level: 'error', scope: 'ui', msg: String(e) }));

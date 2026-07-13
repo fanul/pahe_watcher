@@ -22,6 +22,8 @@ export class BypassEngine {
     this.browser = new BrowserManager({
       profileDir: config.bypass.profileDir,
       headless: config.bypass.browserMode !== 'headful',
+      initialPageDelayMs: (config.bypass.initialPageDelaySeconds || 1.5) * 1000,
+      config: config,
     });
     this.captcha = createCaptchaSolver(config, {
       headless: config.bypass.browserMode !== 'headful',
@@ -41,74 +43,109 @@ export class BypassEngine {
   async resolve(job, ctx = {}) {
     const timeoutMs = this.config.bypass.timeoutSeconds * 1000;
     const page = await this.browser.newPage();
+    const context = page.context();
     const hops = [];
     let settled = null;
 
-    const onFrameNav = (frame) => {
-      if (frame === page.mainFrame()) {
-        const u = frame.url();
-        if (u && u !== 'about:blank') {
-          hops.push(u);
-          ctx.log?.(`→ ${shorten(u)}`);
+    const activePages = new Set([page]);
+    const navListeners = new Map();
+
+    const trackPage = (p) => {
+      const navListener = (frame) => {
+        if (frame === p.mainFrame()) {
+          const u = frame.url();
+          if (u && u !== 'about:blank') {
+            hops.push(u);
+            ctx.log?.(`→ ${shorten(u)}`);
+          }
         }
-      }
+      };
+      p.on('framenavigated', navListener);
+      navListeners.set(p, navListener);
+      
+      p.once('close', () => {
+        p.off('framenavigated', navListener);
+        navListeners.delete(p);
+        activePages.delete(p);
+      });
     };
-    page.on('framenavigated', onFrameNav);
+
+    // Track the initial page
+    trackPage(page);
+
+    // Track any new tabs or popups created in this context
+    const onPage = (newPage) => {
+      activePages.add(newPage);
+      ctx.log?.(`[tab] New tab opened: ${shorten(newPage.url())}`);
+      trackPage(newPage);
+    };
+    context.on('page', onPage);
 
     try {
       ctx.log?.(`Starting: ${job.provider} ${job.quality || ''} — ${shorten(job.url)}`);
       await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
 
-      settled = await this._driveToFinal(page, ctx, timeoutMs);
+      settled = await this._driveToFinal(activePages, ctx, timeoutMs);
       if (!settled) throw new Error('Timed out before reaching a final link');
 
       ctx.log?.(`✔ Final link (${settled.linkType}): ${settled.finalUrl}`);
       return { ...settled, hops };
     } finally {
-      page.off('framenavigated', onFrameNav);
-      await page.close().catch(() => {});
+      // Clean up context listeners and close all pages
+      context.off('page', onPage);
+      for (const p of activePages) {
+        const listener = navListeners.get(p);
+        if (listener) p.off('framenavigated', listener);
+      }
+      await this.browser.close().catch(() => {});
     }
   }
 
   /**
-   * Poll the page until it reaches a GDFlix page (then resolve it) or a final
-   * host directly. The injected userscript handles intermediate ad hops.
+   * Poll all active pages/tabs in the context until one reaches GDFlix or a final host directly.
    */
-  async _driveToFinal(page, ctx, timeoutMs) {
+  async _driveToFinal(activePages, ctx, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     let handledGdflix = false;
 
     while (Date.now() < deadline) {
-      const url = page.url();
-
-      // Reached a final host directly.
-      if (FINAL_HOST_RE.test(url)) {
-        return { finalUrl: url, linkType: classifyFinalLink(url) };
+      const pages = Array.from(activePages).filter(p => !p.isClosed());
+      if (pages.length === 0) {
+        throw new Error('All browser pages/tabs were closed');
       }
 
-      // Reached GDFlix — run the resolver once.
-      if (isGdflixUrl(url) && !handledGdflix) {
-        handledGdflix = true;
-        const res = await resolveGdflix(
-          page,
-          { credentials: this.config.bypass.gdflix, captcha: this.captcha },
-          ctx,
-        ).catch((err) => {
-          ctx.log?.(`GDFlix resolve error: ${err.message}`);
-          return null;
-        });
-        if (res) return res;
-        handledGdflix = false; // allow retry if page changed
+      for (const p of pages) {
+        const url = p.url();
+
+        // Reached a final host directly.
+        if (FINAL_HOST_RE.test(url)) {
+          return { finalUrl: url, linkType: classifyFinalLink(url) };
+        }
+
+        // Reached GDFlix — run the resolver once.
+        if (isGdflixUrl(url) && !handledGdflix) {
+          handledGdflix = true;
+          const res = await resolveGdflix(
+            p,
+            { credentials: this.config.bypass.gdflix, captcha: this.captcha },
+            ctx,
+          ).catch((err) => {
+            ctx.log?.(`GDFlix resolve error: ${err.message}`);
+            return null;
+          });
+          if (res) return res;
+          handledGdflix = false; // allow retry if page changed
+        }
+
+        // If a captcha is blocking this tab, try to solve it.
+        const cap = await detectCaptcha(p);
+        if (cap?.present) {
+          ctx.log?.(`Captcha detected (${cap.kind}) at ${shorten(url)}`);
+          await this.captcha.solve(p, ctx).catch(() => {});
+        }
       }
 
-      // If a captcha is blocking an intermediate hop, try to solve it.
-      const cap = await detectCaptcha(page);
-      if (cap?.present) {
-        ctx.log?.(`Captcha detected (${cap.kind}) at ${shorten(url)}`);
-        await this.captcha.solve(page, ctx).catch(() => {});
-      }
-
-      await page.waitForTimeout(1000);
+      await pages[0].waitForTimeout(1000);
     }
     return null;
   }

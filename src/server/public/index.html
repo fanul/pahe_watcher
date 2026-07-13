@@ -27,12 +27,42 @@
 
   <main class="grid">
     <section class="panel">
-      <h2>New posts <span class="muted" id="postCount"></span></h2>
-      <div id="posts" class="list"></div>
+      <div class="tabs-header">
+        <button id="tabNewPosts" class="tab-btn active">New Posts <span id="postCount" class="muted"></span></button>
+        <button id="tabCrawl" class="tab-btn">Historical Crawl</button>
+      </div>
+      
+      <div id="panelNewPosts" class="tab-content">
+        <div id="posts" class="list"></div>
+      </div>
+      
+      <div id="panelCrawl" class="tab-content hidden">
+        <div class="crawl-controls">
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text);">
+            Max pages:
+            <input id="crawlMaxPages" type="number" value="5" min="1" max="100" style="width: 70px; padding: 4px 8px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text);" />
+          </label>
+          <button id="btnStartCrawl" class="btn small">Start Crawl</button>
+          <span id="crawlProgress" class="muted small" style="margin-left: 8px;"></span>
+        </div>
+        <div id="crawlResults" class="list" style="margin-top: 12px;">
+          <div class="muted" style="padding: 10px 0;">No crawl results. Enter pages and click "Start Crawl".</div>
+        </div>
+      </div>
     </section>
 
     <section class="panel">
-      <h2>Jobs <span class="muted" id="jobStats"></span></h2>
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+        <h2 style="margin: 0;">Jobs <span class="muted" id="jobStats"></span></h2>
+        <div style="display: flex; gap: 8px;">
+          <button id="btnRetryAllJobs" class="btn small muted-btn">Retry Failed</button>
+          <button id="btnClearAllJobs" class="btn small danger-btn">Clear All</button>
+        </div>
+      </div>
+      <form id="manualJobForm" style="display: flex; gap: 8px; margin-bottom: 12px; background: var(--panel-2); padding: 8px; border-radius: 8px; border: 1px solid var(--border);">
+        <input name="url" placeholder="Paste link (Shortener, GDFlix, or final link)" required style="flex: 1; padding: 6px 10px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px;" />
+        <button type="submit" class="btn small">Add Job</button>
+      </form>
       <div id="jobs" class="list"></div>
     </section>
 
@@ -45,21 +75,135 @@
   <dialog id="settingsDialog">
     <form method="dialog" id="settingsForm">
       <h3>Settings</h3>
-      <label>Preferred providers (comma)
-        <input name="preferredProviders" placeholder="GD,1F,MG" />
-      </label>
-      <label>Preferred qualities (comma)
-        <input name="preferredQualities" placeholder="720p,1080p" />
-      </label>
-      <label>Poll interval (seconds)
-        <input name="pollIntervalSeconds" type="number" min="15" />
-      </label>
-      <label class="row"><input name="autoResolve" type="checkbox" /> Auto-resolve new posts</label>
-      <label>Browser mode
-        <select name="browserMode"><option value="headless">headless</option><option value="headful">headful (for manual captcha)</option></select>
-      </label>
-      <div class="muted small">Sheet: <span id="sheetInfo"></span></div>
-      <menu>
+      
+      <div class="settings-scroll-container">
+        <fieldset>
+          <legend>Watcher Settings</legend>
+          <label>Preferred providers (comma)
+            <input name="preferredProviders" placeholder="GD,1F,MG" />
+          </label>
+          <label>Preferred qualities (comma)
+            <input name="preferredQualities" placeholder="720p,1080p" />
+          </label>
+          <label>Preferred codecs (comma)
+            <input name="preferredCodecs" placeholder="x265,x264" />
+          </label>
+          <label>Series Download Type
+            <select name="preferredSeriesType">
+              <option value="batch">Batch Links Only (Recommended)</option>
+              <option value="episode">Episode Links Only</option>
+              <option value="both">Both Batch & Episode</option>
+            </select>
+          </label>
+          <label>Poll interval (seconds)
+            <input name="pollIntervalSeconds" type="number" min="15" />
+          </label>
+          <label class="row">
+            <input name="autoResolve" type="checkbox" /> Auto-resolve new posts
+          </label>
+          <label class="row">
+            <input name="onlyCompleteSeries" type="checkbox" /> Only auto-resolve series containing "Complete" in title
+          </label>
+          <label>Browser mode
+            <select name="browserMode">
+              <option value="headless">headless</option>
+              <option value="headful">headful (for manual captcha)</option>
+            </select>
+          </label>
+          <label>Initial page delay (seconds)
+            <input name="initialPageDelaySeconds" type="number" step="0.1" min="0" />
+          </label>
+          <label>Timer Speedup Exclusions (comma-separated)
+            <input name="speedUpExclusions" placeholder="oii.la, tpi.li, pahe.plus, ouo.io" />
+          </label>
+          
+          <fieldset style="margin-top: 10px; padding: 10px; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;">
+            <legend style="font-size: 0.9em; font-weight: bold; color: var(--accent);">Captcha Stealth Options</legend>
+            <label class="row" style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: normal; cursor: pointer;">
+              <input name="stealth_disableAutomationFlag" type="checkbox" /> Disable Automation Flag (ignoreDefaultArgs)
+            </label>
+            <label class="row" style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: normal; cursor: pointer;">
+              <input name="stealth_useStealthUserAgent" type="checkbox" /> Use Stealth User-Agent
+            </label>
+            <label class="row" style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: normal; cursor: pointer;">
+              <input name="stealth_maskWebdriver" type="checkbox" /> Mask webdriver property (navigator.webdriver = undefined)
+            </label>
+            <label class="row" style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: normal; cursor: pointer;">
+              <input name="stealth_blockAdsAndTrackers" type="checkbox" /> Block Ad Networks & Trackers (Speeds load & prevents popups)
+            </label>
+            <label class="row" style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: normal; cursor: pointer;">
+              <input name="stealth_spoofCanvasFingerprint" type="checkbox" /> Spoof Canvas/WebGL GPU Fingerprints
+            </label>
+            <label class="row" style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+              <input name="stealth_useNoSandbox" type="checkbox" /> Disable Sandbox (--no-sandbox)
+            </label>
+          </fieldset>
+        </fieldset>
+
+        <fieldset>
+          <legend>Google Sheets Integration</legend>
+          <label>Google Sheet ID
+            <input name="sheetId" placeholder="1aBcD...xyz" />
+          </label>
+          <label>Google Service Account Key (JSON)
+            <textarea name="serviceAccountKeyContent" rows="4" placeholder='{ "type": "service_account", ... }'></textarea>
+          </label>
+          <div class="muted small" style="margin-top: 4px;">Status: <span id="sheetInfo"></span></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>CAPTCHA & Cloudflare Bypass</legend>
+          <label>Bypass Provider
+            <select name="captchaProvider" id="captchaProviderSelect">
+              <option value="none">None</option>
+              <option value="manual">Manual (via GUI)</option>
+              <option value="2captcha">2Captcha API</option>
+              <option value="flaresolverr">FlareSolverr (Local Docker)</option>
+              <option value="byparr">ByParr (Local Docker)</option>
+            </select>
+          </label>
+          
+          <div id="cfg2Captcha" class="cfg-group hidden">
+            <label>2Captcha API Key
+              <input name="twoCaptchaApiKey" placeholder="Your 2Captcha API Key" />
+            </label>
+          </div>
+          
+          <div id="cfgFlareSolverr" class="cfg-group hidden">
+            <label>FlareSolverr URL
+              <input name="flaresolverrUrl" placeholder="http://localhost:8191" />
+            </label>
+          </div>
+          
+          <div id="cfgByParr" class="cfg-group hidden">
+            <label>ByParr URL
+              <input name="byparrUrl" placeholder="http://localhost:8192" />
+            </label>
+          </div>
+
+          <label class="row" style="margin-top: 10px;">
+            <input name="startServicesOnStart" type="checkbox" /> Auto-start services with Docker
+          </label>
+          <div class="muted small" style="margin-top: 8px; color: var(--amber); border-left: 2px solid var(--amber); padding-left: 8px;">
+            ⚠️ <b>Note:</b> "Manual" captcha solving requires the Playwright <b>Browser mode</b> set to <b>headful</b> under Watcher Settings so the window is visible.
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>GDFlix Authentication</legend>
+          <label>GDFlix Email
+            <input name="gdflixEmail" type="email" placeholder="email@example.com" />
+          </label>
+          <label>GDFlix Password
+            <input name="gdflixPassword" type="password" placeholder="Password" />
+          </label>
+          <label>GDFlix Cookies (Laravel_session=...; XSRF-TOKEN=... or JSON)
+            <textarea name="gdflixCookies" rows="3" placeholder="Laravel_session=...; XSRF-TOKEN=..."></textarea>
+          </label>
+        </fieldset>
+      </div>
+
+      <menu style="margin-top: 16px;">
         <button value="cancel" class="btn ghost">Cancel</button>
         <button value="save" id="btnSaveSettings" class="btn">Save</button>
       </menu>

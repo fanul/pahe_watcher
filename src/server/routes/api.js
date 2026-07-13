@@ -1,5 +1,6 @@
 import express from 'express';
 import { bus } from '../../core/eventBus.js';
+import { selectOptions, checkIsSeries, parseDownloadOptions } from '../../parser/postParser.js';
 
 /**
  * REST API. Receives the wired application context (`app`) and exposes control
@@ -40,16 +41,36 @@ export function createApiRouter(app) {
   });
 
   // Enqueue resolution jobs for a post's matching options.
-  router.post('/posts/:id/resolve', (req, res) => {
+  router.post('/posts/:id/resolve', async (req, res) => {
     const post = store.getPost(req.params.id);
     if (!post) return res.status(404).json({ error: 'not found' });
-    const providers = (req.body?.providers || runtime.watcher.preferredProviders || []).map((p) => p.toUpperCase());
-    const qualities = (req.body?.qualities || runtime.watcher.preferredQualities || []).map((q) => q.toLowerCase());
-    const selected = (post.options || []).filter((o) => {
-      const pOk = providers.length === 0 || providers.includes(o.provider);
-      const qOk = qualities.length === 0 || (o.quality && qualities.includes(o.quality));
-      return pOk && qOk;
+
+    // Lazy load options if empty (e.g. from historical crawl)
+    if (!post.options || post.options.length === 0) {
+      try {
+        const full = await watcher.client.getPost(post.id);
+        post.options = parseDownloadOptions(full.contentHtml);
+        store.markPost(post);
+        bus.emit('post:new', post); // update GUI options view
+      } catch (err) {
+        return res.status(500).json({ error: `Failed to fetch post download links: ${err.message}` });
+      }
+    }
+    
+    const providers = req.body?.providers || runtime.watcher.preferredProviders;
+    const qualities = req.body?.qualities || runtime.watcher.preferredQualities;
+    const codecs = runtime.watcher.preferredCodecs || ['x265', 'x264'];
+    const seriesType = runtime.watcher.preferredSeriesType || 'batch';
+    const isSeries = checkIsSeries(post.title, post.options || []);
+
+    const selected = selectOptions(post.options || [], {
+      providers,
+      qualities,
+      codecs,
+      seriesType,
+      isSeries,
     });
+
     const jobs = selected.map((opt) =>
       queue.enqueue({
         postId: post.id,
@@ -63,6 +84,44 @@ export function createApiRouter(app) {
       }),
     );
     res.json({ enqueued: jobs.length, jobs });
+  });
+
+  // Crawl previous pages of posts (lazy loads details on-demand)
+  router.post('/watcher/crawl', async (req, res) => {
+    const maxPages = parseInt(req.body?.maxPages || 5, 10) || 5;
+    const results = [];
+    
+    try {
+      for (let page = 1; page <= maxPages; page++) {
+        // Emit WebSocket progress event
+        bus.emit('crawl:progress', { page, maxPages, status: 'running' });
+        
+        const posts = await watcher.client.getPostsPage(page, 10);
+        if (posts.length === 0) break;
+
+        for (const post of posts) {
+          const existing = store.getPost(post.id);
+          const entry = {
+            id: post.id,
+            title: post.title,
+            link: post.link,
+            date: post.date,
+            seenAt: existing?.seenAt || new Date().toISOString(),
+            options: existing?.options || [], // lazy-loaded on demand
+            pageFound: page
+          };
+          store.markPost(entry);
+          bus.emit('post:new', entry); // render in posts list
+          results.push(entry);
+        }
+      }
+      
+      bus.emit('crawl:progress', { status: 'done', resultsCount: results.length });
+      res.json({ results });
+    } catch (err) {
+      bus.emit('crawl:progress', { status: 'error', error: err.message });
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ── jobs ──
@@ -85,6 +144,17 @@ export function createApiRouter(app) {
   });
   router.post('/jobs/:id/cancel', (req, res) => {
     res.json({ ok: queue.cancel(req.params.id) });
+  });
+  router.delete('/jobs/:id', (req, res) => {
+    res.json({ ok: queue.delete(req.params.id) });
+  });
+  router.post('/queue/clear', (req, res) => {
+    queue.clearAll();
+    res.json({ ok: true });
+  });
+  router.post('/queue/retry', (req, res) => {
+    const count = queue.retryAll();
+    res.json({ retried: count });
   });
 
   // ── watcher control ──
@@ -113,9 +183,13 @@ export function createApiRouter(app) {
   router.get('/config', (req, res) => {
     res.json(app.getPublicConfig());
   });
-  router.patch('/config', (req, res) => {
-    const updated = app.updateConfig(req.body || {});
-    res.json(updated);
+  router.patch('/config', async (req, res) => {
+    try {
+      const updated = await app.updateConfig(req.body || {});
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ── sheets ──

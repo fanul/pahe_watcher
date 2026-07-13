@@ -1,6 +1,7 @@
 import { ManualSolver } from './manual.js';
 import { TwoCaptchaSolver } from './twocaptcha.js';
 import { NoopSolver } from './noop.js';
+import { FlareSolverrSolver } from './flaresolverr.js';
 
 /**
  * Factory returning a captcha solver based on config.
@@ -13,6 +14,10 @@ export function createCaptchaSolver(config, deps = {}) {
   switch (provider) {
     case '2captcha':
       return new TwoCaptchaSolver(config.bypass.captcha.twoCaptchaApiKey);
+    case 'flaresolverr':
+      return new FlareSolverrSolver(config.bypass.captcha.flaresolverrUrl || 'http://localhost:8191', 'flaresolverr');
+    case 'byparr':
+      return new FlareSolverrSolver(config.bypass.captcha.byparrUrl || 'http://localhost:8192', 'byparr');
     case 'manual':
       return new ManualSolver(deps);
     case 'none':

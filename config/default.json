@@ -10,21 +10,38 @@
     "perPage": 10,
     "preferredProviders": ["GD"],
     "preferredQualities": ["720p", "1080p"],
+    "preferredCodecs": ["x265", "x264"],
+    "preferredSeriesType": "batch",
+    "onlyCompleteSeries": true,
     "autoResolve": true
   },
   "bypass": {
     "browserMode": "headless",
+    "initialPageDelaySeconds": 1.5,
     "concurrency": 1,
     "timeoutSeconds": 180,
     "profileDir": "./data/browser-profile",
     "maxRetries": 2,
+    "speedUpExclusions": ["oii.la", "linegee.net", "tpi.li", "pahe.plus", "ouo.io", "ouo.press"],
+    "stealth": {
+      "disableAutomationFlag": true,
+      "useStealthUserAgent": true,
+      "maskWebdriver": true,
+      "blockAdsAndTrackers": true,
+      "spoofCanvasFingerprint": false,
+      "useNoSandbox": true
+    },
     "captcha": {
       "provider": "manual",
-      "twoCaptchaApiKey": ""
+      "twoCaptchaApiKey": "",
+      "flaresolverrUrl": "http://localhost:8191",
+      "byparrUrl": "http://localhost:8192",
+      "startServicesOnStart": true
     },
     "gdflix": {
       "email": "",
-      "password": ""
+      "password": "",
+      "cookies": ""
     }
   },
   "sheets": {

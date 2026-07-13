@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDownloadOptions, selectOptions } from '../src/parser/postParser.js';
+import { parseDownloadOptions, selectOptions, checkIsSeries } from '../src/parser/postParser.js';
 
 // Mirrors the real pahe.ink layout: a <b> quality/size label followed by a row
 // of short provider anchors pointing at a shortener host.
@@ -48,3 +48,68 @@ test('dedupes identical URLs', () => {
   const bbb = opts.filter((o) => o.url === 'https://teknoasian.com/?ht=bbb');
   assert.equal(bbb.length, 1);
 });
+
+test('deduplicates codecs based on preferredCodecs priority', () => {
+  const sampleWithCodecs = `
+    <p><b>720p x264</b><br>
+      <a href="https://teknoasian.com/?ht=111">GD</a>
+    </p>
+    <p><b>720p x265</b><br>
+      <a href="https://teknoasian.com/?ht=222">GD</a>
+    </p>
+  `;
+  const opts = parseDownloadOptions(sampleWithCodecs);
+  
+  // Prefer x265
+  const selectedx265 = selectOptions(opts, {
+    providers: ['GD'],
+    qualities: ['720p'],
+    codecs: ['x265', 'x264'],
+  });
+  assert.equal(selectedx265.length, 1);
+  assert.equal(selectedx265[0].url, 'https://teknoasian.com/?ht=222');
+
+  // Prefer x264
+  const selectedx264 = selectOptions(opts, {
+    providers: ['GD'],
+    qualities: ['720p'],
+    codecs: ['x264', 'x265'],
+  });
+  assert.equal(selectedx264.length, 1);
+  assert.equal(selectedx264[0].url, 'https://teknoasian.com/?ht=111');
+});
+
+test('detects series and filters by preferredSeriesType (batch)', () => {
+  const sampleSeries = `
+    <p><b>720p x265 Episode 1</b><br>
+      <a href="https://teknoasian.com/?ht=ep1">GD</a>
+    </p>
+    <p><b>720p x265 Episode 1-10</b><br>
+      <a href="https://teknoasian.com/?ht=batch">GD</a>
+    </p>
+  `;
+  const opts = parseDownloadOptions(sampleSeries);
+  const isSeries = checkIsSeries('Some Series Season 1 [Episode 10 Added]', opts);
+  assert.ok(isSeries);
+
+  // Filter for batch
+  const selectedBatch = selectOptions(opts, {
+    providers: ['GD'],
+    qualities: ['720p'],
+    seriesType: 'batch',
+    isSeries,
+  });
+  assert.equal(selectedBatch.length, 1);
+  assert.equal(selectedBatch[0].url, 'https://teknoasian.com/?ht=batch');
+
+  // Filter for episode
+  const selectedEpisode = selectOptions(opts, {
+    providers: ['GD'],
+    qualities: ['720p'],
+    seriesType: 'episode',
+    isSeries,
+  });
+  assert.equal(selectedEpisode.length, 1);
+  assert.equal(selectedEpisode[0].url, 'https://teknoasian.com/?ht=ep1');
+});
+

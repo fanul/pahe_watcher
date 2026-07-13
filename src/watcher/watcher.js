@@ -1,7 +1,7 @@
 import { createLogger } from '../core/logger.js';
 import { bus } from '../core/eventBus.js';
 import { PaheClient } from './paheClient.js';
-import { parseDownloadOptions, selectOptions } from '../parser/postParser.js';
+import { parseDownloadOptions, selectOptions, checkIsSeries } from '../parser/postParser.js';
 
 const log = createLogger('watcher');
 
@@ -104,9 +104,19 @@ export class Watcher {
       return;
     }
 
+    const isSeries = checkIsSeries(post.title, options);
+    
+    if (isSeries && this.config.watcher.onlyCompleteSeries && !/complete/i.test(post.title)) {
+      log.info('Skipping auto-resolve for in-progress series (does not contain "Complete" in title)', { id: post.id, title: post.title });
+      return;
+    }
+
     const selected = selectOptions(options, {
       providers: this.config.watcher.preferredProviders,
       qualities: this.config.watcher.preferredQualities,
+      codecs: this.config.watcher.preferredCodecs || ['x265', 'x264'],
+      seriesType: this.config.watcher.preferredSeriesType || 'batch',
+      isSeries,
     });
 
     if (selected.length === 0) {
