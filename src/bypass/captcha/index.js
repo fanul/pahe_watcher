@@ -2,6 +2,7 @@ import { ManualSolver } from './manual.js';
 import { TwoCaptchaSolver } from './twocaptcha.js';
 import { NoopSolver } from './noop.js';
 import { FlareSolverrSolver } from './flaresolverr.js';
+import { CapSolverSolver } from './capsolver.js';
 
 /**
  * Factory returning a captcha solver based on config.
@@ -14,6 +15,8 @@ export function createCaptchaSolver(config, deps = {}) {
   switch (provider) {
     case '2captcha':
       return new TwoCaptchaSolver(config.bypass.captcha.twoCaptchaApiKey);
+    case 'capsolver':
+      return new CapSolverSolver(config.bypass.captcha.capSolverApiKey);
     case 'flaresolverr':
       return new FlareSolverrSolver(config.bypass.captcha.flaresolverrUrl || 'http://localhost:8191', 'flaresolverr');
     case 'byparr':
@@ -43,8 +46,25 @@ export async function detectCaptcha(page) {
         return { present: true, kind: 'hcaptcha', siteKey: el?.getAttribute('data-sitekey') || null };
       }
       if (find('iframe[src*="challenges.cloudflare.com"], .cf-turnstile')) {
-        const el = find('.cf-turnstile');
-        return { present: true, kind: 'turnstile', siteKey: el?.getAttribute('data-sitekey') || null };
+        const el = find('.cf-turnstile') || find('[data-sitekey]');
+        // sitekey can live on the widget div OR in the challenge iframe src (?k=...)
+        let siteKey = el?.getAttribute('data-sitekey') || null;
+        if (!siteKey) {
+          const ifr = find('iframe[src*="challenges.cloudflare.com"]');
+          const m = ifr?.getAttribute('src')?.match(/[?&/](?:k|sitekey)[=/]([^&?/]+)/);
+          if (m) siteKey = decodeURIComponent(m[1]);
+        }
+        // Whether the widget already produced a token (auto-passed via stealth).
+        const respEl = find('[name="cf-turnstile-response"]');
+        const solvedToken = respEl && respEl.value ? respEl.value : null;
+        return {
+          present: true,
+          kind: 'turnstile',
+          siteKey,
+          action: el?.getAttribute('data-action') || null,
+          cData: el?.getAttribute('data-cdata') || null,
+          solvedToken,
+        };
       }
       return null;
     })

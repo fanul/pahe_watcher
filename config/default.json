@@ -16,7 +16,7 @@
     "autoResolve": true
   },
   "bypass": {
-    "browserMode": "headless",
+    "browserMode": "auto",
     "initialPageDelaySeconds": 1.5,
     "concurrency": 1,
     "timeoutSeconds": 180,
@@ -29,6 +29,8 @@
     "speedUpPahe": true,
     "removeOuoAds": true,
     "stealth": {
+      "engine": "patchright",
+      "chromeChannel": "chrome",
       "disableAutomationFlag": true,
       "useStealthUserAgent": true,
       "maskWebdriver": true,
@@ -39,6 +41,7 @@
     "captcha": {
       "provider": "manual",
       "twoCaptchaApiKey": "",
+      "capSolverApiKey": "",
       "flaresolverrUrl": "http://localhost:8191",
       "byparrUrl": "http://localhost:8192",
       "startServicesOnStart": true

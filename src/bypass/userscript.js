@@ -331,7 +331,7 @@ export function getInjectedAutomationScript(config = {}) {
       activeRule.run();
     };
 
-    try { setInterval(tick, 30); } catch {}
+    try { setInterval(tick, 500); } catch {}
     if (document.readyState !== 'loading') tick();
     document.addEventListener('readystatechange', tick);
     document.addEventListener('DOMContentLoaded', tick);

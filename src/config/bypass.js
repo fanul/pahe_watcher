@@ -5,6 +5,7 @@ export function getPublicBypassConfig(runtime) {
     concurrency: runtime.bypass.concurrency,
     captchaProvider: runtime.bypass.captcha.provider,
     twoCaptchaApiKey: runtime.bypass.captcha.twoCaptchaApiKey,
+    capSolverApiKey: runtime.bypass.captcha.capSolverApiKey,
     flaresolverrUrl: runtime.bypass.captcha.flaresolverrUrl,
     byparrUrl: runtime.bypass.captcha.byparrUrl,
     startServicesOnStart: runtime.bypass.captcha.startServicesOnStart,

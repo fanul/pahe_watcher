@@ -36,3 +36,28 @@ FlareSolverr and ByParr are third-party proxy-based solutions used to bypass Clo
 
 Both services are spawned automatically via Docker when starting the application with `npm start`, provided Docker is running on the host system. They can be selected as the active CAPTCHA/Cloudflare bypass provider in the GUI Settings panel.
 
+> ⚠️ **Important limitation — ouo.io.** FlareSolverr and ByParr solve Cloudflare's
+> **full-page "Under Attack" / IUAM interstitial** and return `cf_clearance`
+> cookies. They do **not** solve an **in-form Turnstile widget** — which is
+> exactly what ouo.io's page 1 (`#form-captcha`) uses. Its `cf-turnstile-response`
+> token must be freshly minted client-side, and a cookie can't do that. So for
+> ouo.io, use one of:
+>
+> 1. **Stealth auto-pass** — the `patchright` engine + real Chrome (`channel: chrome`)
+>    often makes Turnstile issue the token on its own (provider `none`).
+> 2. **Manual** — headful window, solve the checkbox yourself.
+> 3. **A Turnstile-capable solver** — `2captcha` or `capsolver` (submits
+>    sitekey + action, injects the token, the ouo rule then submits the form).
+>
+> See `src/bypass/browser.js` (engine), `resolveHeadless()` in
+> `src/bypass/index.js` (mode coupling), and `src/bypass/captcha/turnstileInject.js`.
+
+## Stealth engine (patchright)
+
+The browser is driven by **patchright**, a drop-in undetected Playwright fork
+that closes the `Runtime.enable` CDP leak Cloudflare uses to fingerprint
+Playwright. It runs the user's real **Chrome** via `channel: "chrome"`. Configure
+via `bypass.stealth.engine` (`patchright` | `playwright`) and
+`bypass.stealth.chromeChannel` (`chrome` | `chromium`). Falls back to bundled
+Chromium automatically if Chrome isn't installed.
+

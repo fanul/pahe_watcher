@@ -16,18 +16,34 @@ const FINAL_HOST_RE = /(drive\.google\.com|googleusercontent\.com|pixeldrain\.|p
  * final host), then runs the GDFlix resolver. Captcha handling is delegated to
  * the configured solver.
  */
+/**
+ * Resolve the effective headless flag.
+ * - "headful"  -> always headful
+ * - "headless" -> always headless
+ * - "auto" (default) -> follow the captcha provider: MANUAL needs a visible
+ *   window to solve Turnstile by hand, so headful; paid/automated providers
+ *   (2captcha, capsolver, none, flaresolverr, byparr) run headless.
+ */
+export function resolveHeadless(config) {
+  const mode = (config.bypass.browserMode || 'auto').toLowerCase();
+  if (mode === 'headful') return false;
+  if (mode === 'headless') return true;
+  const provider = (config.bypass.captcha?.provider || 'none').toLowerCase();
+  return provider !== 'manual';
+}
+
 export class BypassEngine {
   constructor({ config }) {
     this.config = config;
+    const headless = resolveHeadless(config);
+    log.info(`Browser mode resolved: ${headless ? 'headless' : 'headful'} (browserMode=${config.bypass.browserMode}, captcha=${config.bypass.captcha?.provider})`);
     this.browser = new BrowserManager({
       profileDir: config.bypass.profileDir,
-      headless: config.bypass.browserMode !== 'headful',
+      headless,
       initialPageDelayMs: (config.bypass.initialPageDelaySeconds || 1.5) * 1000,
       config: config,
     });
-    this.captcha = createCaptchaSolver(config, {
-      headless: config.bypass.browserMode !== 'headful',
-    });
+    this.captcha = createCaptchaSolver(config, { headless });
   }
 
   async close() {
@@ -44,6 +60,17 @@ export class BypassEngine {
     const timeoutMs = this.config.bypass.timeoutSeconds * 1000;
     const page = await this.browser.newPage();
     const context = page.context();
+    
+    // Clear cookies for shorteners to prevent Nginx "400 Bad Request (Cookie Too Large)"
+    try {
+      await context.clearCookies({ domain: 'ouo.io' }).catch(() => {});
+      await context.clearCookies({ domain: '.ouo.io' }).catch(() => {});
+      await context.clearCookies({ domain: 'ouo.press' }).catch(() => {});
+      await context.clearCookies({ domain: '.ouo.press' }).catch(() => {});
+      await context.clearCookies({ domain: 'pahe.plus' }).catch(() => {});
+      await context.clearCookies({ domain: '.pahe.plus' }).catch(() => {});
+    } catch (e) {}
+
     const hops = [];
     let settled = null;
 
@@ -199,10 +226,14 @@ export class BypassEngine {
             const captchaForm = document.getElementById('form-captcha');
             if (captchaForm) {
               const cfres = document.querySelector('[name="cf-turnstile-response"]');
-              if (cfres && cfres.value) {
-                window.__nodeDone = true;
-                console.log('[node-auto] Page 1: Turnstile solved. Submitting #form-captcha');
-                nodeFormSubmit(captchaForm);
+              if (cfres && cfres.value && !window.__nodeSubmitTimer) {
+                window.__nodeSubmitTimer = true;
+                console.log('[node-auto] Page 1: Turnstile solved. Waiting 1000ms for Cloudflare sync...');
+                setTimeout(() => {
+                  window.__nodeDone = true;
+                  console.log('[node-auto] Page 1: Submitting #form-captcha');
+                  nodeFormSubmit(captchaForm);
+                }, 1000);
               }
             }
           }).catch(() => {});

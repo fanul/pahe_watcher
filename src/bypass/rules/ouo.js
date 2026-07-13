@@ -32,8 +32,11 @@
         const cfres = document.querySelector('[name="cf-turnstile-response"]');
         if (cfres && cfres.value) {
           window.__done = true;
-          console.log('[pahe-auto] [ouo.io] Page 1 solved (Turnstile token present). Submitting form: #form-captcha');
-          formSubmit(captchaForm);
+          console.log('[pahe-auto] [ouo.io] Page 1 solved. Waiting 1000ms for Cloudflare sync...');
+          setTimeout(() => {
+            console.log('[pahe-auto] [ouo.io] Submitting form: #form-captcha');
+            formSubmit(captchaForm);
+          }, 1000);
         } else {
           // Fallback: click human verification button if it needs manual click triggers
           const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
