@@ -70,14 +70,54 @@ export function getInjectedAutomationScript(config = {}) {
 
     const site = window.location.hostname.replace(/^www\\./, '');
 
+    // ── Dedicated Flying/Floating Ads Cleaner for ouo.io ──
+    const removeOuoAdsSetting = ${removeOuoAds};
+    if (removeOuoAdsSetting && /ouo\\.(io|press)/i.test(site)) {
+      try {
+        const style = document.createElement('style');
+        style.innerHTML = \`
+          body > div[style*="position: fixed"], 
+          body > div[style*="position: absolute"],
+          body > iframe[style*="position: fixed"],
+          body > iframe[style*="position: absolute"],
+          body > a[style*="position: fixed"],
+          body > a[style*="position: absolute"] {
+            display: none !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            width: 0 !important;
+            height: 0 !important;
+          }
+        \`;
+        document.documentElement.appendChild(style);
+      } catch {}
+
+      const cleanOuoAds = () => {
+        try {
+          document.querySelectorAll('*').forEach((el) => {
+            if (el.closest('#form-captcha') || el.closest('#form-go')) return;
+            const style = window.getComputedStyle(el);
+            if (style.position === 'fixed' || style.position === 'absolute') {
+              if (el.querySelector('.cf-turnstile') || el.classList.contains('cf-turnstile')) return;
+              el.style.display = 'none';
+              el.remove();
+            }
+          });
+        } catch {}
+      };
+      
+      cleanOuoAds();
+      document.addEventListener('DOMContentLoaded', cleanOuoAds);
+      window.addEventListener('load', cleanOuoAds);
+      setInterval(cleanOuoAds, 400);
+    }
+
     // Check if ouo injection is disabled
     const injectOuo = ${injectOuo};
     if (!injectOuo && /ouo\\.(io|press)/i.test(site)) {
       console.log('[pahe-auto] Userscript injection is disabled for ouo.io');
       return;
     }
-
-    const removeOuoAdsSetting = ${removeOuoAds};
 
     const o = window.location.origin;
     const startTime = Date.now();
@@ -211,12 +251,12 @@ export function getInjectedAutomationScript(config = {}) {
           if (activeSpeedUp && !excluded) {
             divisor = 50;
           } else if (isPaheDomain && speedUpPaheSetting) {
-            const hasReadyText = document.body && (
-              document.body.innerText.includes('almost ready') || 
-              document.body.innerText.includes('almost') || 
-              document.body.innerText.includes('ready')
-            );
-            if (isCaptchaSolved() || hasReadyText) {
+            const stack = new Error().stack || '';
+            const isVerificationCaller = stack.includes('hcaptcha') || 
+                                         stack.includes('recaptcha') || 
+                                         stack.includes('turnstile') || 
+                                         stack.includes('cloudflare');
+            if (!isVerificationCaller) {
               divisor = 50;
             }
           }
@@ -229,12 +269,12 @@ export function getInjectedAutomationScript(config = {}) {
           if (activeSpeedUp && !excluded) {
             divisor = 50;
           } else if (isPaheDomain && speedUpPaheSetting) {
-            const hasReadyText = document.body && (
-              document.body.innerText.includes('almost ready') || 
-              document.body.innerText.includes('almost') || 
-              document.body.innerText.includes('ready')
-            );
-            if (isCaptchaSolved() || hasReadyText) {
+            const stack = new Error().stack || '';
+            const isVerificationCaller = stack.includes('hcaptcha') || 
+                                         stack.includes('recaptcha') || 
+                                         stack.includes('turnstile') || 
+                                         stack.includes('cloudflare');
+            if (!isVerificationCaller) {
               divisor = 50;
             }
           }
