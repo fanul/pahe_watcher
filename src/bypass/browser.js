@@ -4,7 +4,7 @@ import { pageAutomation } from './userscript.js';
 
 const log = createLogger('browser');
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
 
 /**
  * Manages a single persistent Chromium context (via Playwright). Persisting the
@@ -39,7 +39,7 @@ export class BrowserManager {
       viewport: { width: 1366, height: 768 },
     };
 
-    if (stealth.useStealthUserAgent !== false) {
+    if (stealth.useStealthUserAgent !== false && this.headless) {
       launchOptions.userAgent = UA;
     }
 
