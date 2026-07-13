@@ -73,7 +73,7 @@ export function pageAutomation() {
 
   // ── speed up the countdown timers the ad pages use ──
   try {
-    const noSpeed = ['oii.la', 'linegee.net', 'tpi.li', 'pahe.plus', 'ouo.io', 'ouo.press', 'teknoasian.com'];
+    const noSpeed = window.__paheSpeedUpExclusions || ['oii.la', 'linegee.net', 'tpi.li', 'pahe.plus', 'ouo.io', 'ouo.press'];
     if (!noSpeed.some((s) => site.includes(s))) {
       const oT = window.setTimeout.bind(window);
       const oI = window.setInterval.bind(window);
@@ -160,6 +160,10 @@ export function pageAutomation() {
       if (submitBtn) {
         submitBtn.removeAttribute('disabled');
         submitBtn.click();
+        // Fallback: submit the form directly after 100ms if click didn't trigger navigation
+        setTimeout(() => {
+          try { form.submit(); } catch {}
+        }, 100);
       } else {
         form.submit();
       }
