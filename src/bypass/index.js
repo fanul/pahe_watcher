@@ -108,6 +108,12 @@ export class BypassEngine {
     const deadline = Date.now() + timeoutMs;
     let handledGdflix = false;
 
+    const WHITELIST_DOMAINS = [
+      'pahe.plus', 'old.pahe.plus', 'ouo.io', 'ouo.press', 'gdflix', 'drive.google', 
+      'pixeldrain', 'pixeldra.in', 'teknoasian.com', 'spacetica.com', 'oii.la', 'linegee.net', 
+      'tpi.li', 'wordcounter.icu', 'about:blank'
+    ];
+
     while (Date.now() < deadline) {
       const pages = Array.from(activePages).filter(p => !p.isClosed());
       if (pages.length === 0) {
@@ -116,6 +122,24 @@ export class BypassEngine {
 
       for (const p of pages) {
         const url = p.url();
+
+        // 1. Close failed/error tabs immediately
+        if (url.includes('chrome-error://') || url.includes('chromewebdata')) {
+          ctx.log?.(`[tab] Closing failed/error tab`);
+          await p.close().catch(() => {});
+          continue;
+        }
+
+        // 2. Close unwanted ad popups (if it's not the initial tab and not whitelisted)
+        const isInitialTab = (p === pages[0] && pages.length === 1);
+        if (!isInitialTab && url && url !== 'about:blank') {
+          const isWhitelisted = WHITELIST_DOMAINS.some(d => url.toLowerCase().includes(d));
+          if (!isWhitelisted) {
+            ctx.log?.(`[tab] Closing unwanted ad popup tab: ${shorten(url)}`);
+            await p.close().catch(() => {});
+            continue;
+          }
+        }
 
         // Reached a final host directly.
         if (FINAL_HOST_RE.test(url)) {
