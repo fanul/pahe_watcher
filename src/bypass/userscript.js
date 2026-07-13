@@ -208,18 +208,16 @@ export function getInjectedAutomationScript(config = {}) {
         window.setTimeout = (cb, d, ...a) => {
           let divisor = 1;
           const excluded = userExclusions.some(s => site.includes(s));
-          if (!excluded) {
-            if (activeSpeedUp) {
+          if (activeSpeedUp && !excluded) {
+            divisor = 50;
+          } else if (isPaheDomain && speedUpPaheSetting) {
+            const hasReadyText = document.body && (
+              document.body.innerText.includes('almost ready') || 
+              document.body.innerText.includes('almost') || 
+              document.body.innerText.includes('ready')
+            );
+            if (isCaptchaSolved() || hasReadyText) {
               divisor = 50;
-            } else if (isPaheDomain && speedUpPaheSetting) {
-              const hasReadyText = document.body && (
-                document.body.innerText.includes('almost ready') || 
-                document.body.innerText.includes('almost') || 
-                document.body.innerText.includes('ready')
-              );
-              if (isCaptchaSolved() || hasReadyText) {
-                divisor = 50;
-              }
             }
           }
           return oT(cb, (d || 0) / divisor, ...a);
@@ -228,18 +226,16 @@ export function getInjectedAutomationScript(config = {}) {
         window.setInterval = (cb, d, ...a) => {
           let divisor = 1;
           const excluded = userExclusions.some(s => site.includes(s));
-          if (!excluded) {
-            if (activeSpeedUp) {
+          if (activeSpeedUp && !excluded) {
+            divisor = 50;
+          } else if (isPaheDomain && speedUpPaheSetting) {
+            const hasReadyText = document.body && (
+              document.body.innerText.includes('almost ready') || 
+              document.body.innerText.includes('almost') || 
+              document.body.innerText.includes('ready')
+            );
+            if (isCaptchaSolved() || hasReadyText) {
               divisor = 50;
-            } else if (isPaheDomain && speedUpPaheSetting) {
-              const hasReadyText = document.body && (
-                document.body.innerText.includes('almost ready') || 
-                document.body.innerText.includes('almost') || 
-                document.body.innerText.includes('ready')
-              );
-              if (isCaptchaSolved() || hasReadyText) {
-                divisor = 50;
-              }
             }
           }
           return oI(cb, (d || 0) / divisor, ...a);

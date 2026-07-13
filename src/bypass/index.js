@@ -158,7 +158,22 @@ export class BypassEngine {
 
         // Node-side ouo.io automation fallback when userscript is disabled/restricted
         if (url && /ouo\.(io|press)/i.test(url)) {
-          await p.evaluate(() => {
+          const removeAds = this.config?.bypass?.removeOuoAds !== false;
+          await p.evaluate((removeAds) => {
+            if (removeAds) {
+              try {
+                document.querySelectorAll('div, a, iframe, span').forEach((el) => {
+                  if (el.closest('#form-captcha') || el.closest('#form-go')) return;
+                  const style = window.getComputedStyle(el);
+                  if (style.position === 'fixed' || style.position === 'absolute') {
+                    if (el.querySelector('.cf-turnstile') || el.classList.contains('cf-turnstile')) return;
+                    el.style.display = 'none';
+                    el.remove();
+                  }
+                });
+              } catch {}
+            }
+
             if (window.__nodeDone) return;
             function nodeFormSubmit(form) {
               const btn = form.querySelector('#btn-main, button[type="submit"], button');
