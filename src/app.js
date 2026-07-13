@@ -111,6 +111,7 @@ export async function createApp() {
           gdflixCookies: runtime.bypass.gdflix.cookies,
           stealth: runtime.bypass.stealth,
           speedUpExclusions: runtime.bypass.speedUpExclusions,
+          tabPruningWhitelist: runtime.bypass.tabPruningWhitelist,
         },
         sheets: {
           sheetId: runtime.sheets.sheetId,
@@ -166,7 +167,8 @@ export async function createApp() {
           patch.bypass.browserMode !== undefined || 
           patch.bypass.initialPageDelaySeconds !== undefined ||
           patch.bypass.stealth !== undefined ||
-          patch.bypass.speedUpExclusions !== undefined
+          patch.bypass.speedUpExclusions !== undefined ||
+          patch.bypass.tabPruningWhitelist !== undefined
         ) {
           await bypass.close().catch(() => {});
           bypass.browser.headless = runtime.bypass.browserMode !== 'headful';

@@ -108,7 +108,7 @@ export class BypassEngine {
     const deadline = Date.now() + timeoutMs;
     let handledGdflix = false;
 
-    const WHITELIST_DOMAINS = [
+    const WHITELIST_DOMAINS = this.config?.bypass?.tabPruningWhitelist || [
       'pahe.plus', 'old.pahe.plus', 'ouo.io', 'ouo.press', 'gdflix', 'drive.google', 
       'pixeldrain', 'pixeldra.in', 'teknoasian.com', 'spacetica.com', 'oii.la', 'linegee.net', 
       'tpi.li', 'wordcounter.icu', 'about:blank'

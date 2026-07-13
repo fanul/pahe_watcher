@@ -199,6 +199,7 @@ $('#btnSettings').onclick = async () => {
   f.browserMode.value = cfg.bypass.browserMode;
   f.initialPageDelaySeconds.value = cfg.bypass.initialPageDelaySeconds || 1.5;
   f.speedUpExclusions.value = (cfg.bypass.speedUpExclusions || []).join(', ');
+  f.tabPruningWhitelist.value = (cfg.bypass.tabPruningWhitelist || []).join(', ');
 
   const stealth = cfg.bypass.stealth || {};
   f.stealth_disableAutomationFlag.checked = stealth.disableAutomationFlag !== false;
@@ -247,6 +248,7 @@ $('#settingsForm').addEventListener('submit', async (e) => {
       browserMode: f.browserMode.value,
       initialPageDelaySeconds: parseFloat(f.initialPageDelaySeconds.value) || 1.5,
       speedUpExclusions: splitList(f.speedUpExclusions.value),
+      tabPruningWhitelist: splitList(f.tabPruningWhitelist.value),
       stealth: {
         disableAutomationFlag: f.stealth_disableAutomationFlag.checked,
         useStealthUserAgent: f.stealth_useStealthUserAgent.checked,

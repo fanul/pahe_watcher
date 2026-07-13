@@ -64,6 +64,7 @@ export function loadConfig() {
       profileDir: path.resolve(ROOT, envStr('BROWSER_PROFILE_DIR', d.bypass.profileDir)),
       maxRetries: envInt('BYPASS_MAX_RETRIES', d.bypass.maxRetries),
       speedUpExclusions: envStr('BYPASS_SPEEDUP_EXCLUSIONS', (d.bypass.speedUpExclusions || []).join(',')).split(',').map(s => s.trim()).filter(Boolean),
+      tabPruningWhitelist: envStr('BYPASS_TAB_PRUNING_WHITELIST', (d.bypass.tabPruningWhitelist || []).join(',')).split(',').map(s => s.trim()).filter(Boolean),
       stealth: {
         disableAutomationFlag: envStr('BYPASS_STEALTH_DISABLE_AUTOMATION_FLAG', String(d.bypass.stealth?.disableAutomationFlag)) !== 'false',
         useStealthUserAgent: envStr('BYPASS_STEALTH_USE_STEALTH_USER_AGENT', String(d.bypass.stealth?.useStealthUserAgent)) !== 'false',
