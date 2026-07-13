@@ -260,7 +260,20 @@ export function getInjectedAutomationScript(config = {}) {
               divisor = 50;
             }
           }
-          return oT(cb, (d || 0) / divisor, ...a);
+
+          if (divisor > 1) {
+            const wrappedCb = () => {
+              if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => {
+                  try { cb(...a); } catch {}
+                }, { once: true });
+              } else {
+                try { cb(...a); } catch {}
+              }
+            };
+            return oT(wrappedCb, (d || 0) / divisor);
+          }
+          return oT(cb, d, ...a);
         };
         
         window.setInterval = (cb, d, ...a) => {
@@ -278,7 +291,15 @@ export function getInjectedAutomationScript(config = {}) {
               divisor = 50;
             }
           }
-          return oI(cb, (d || 0) / divisor, ...a);
+
+          if (divisor > 1) {
+            const wrappedCb = () => {
+              if (document.readyState === 'loading') return;
+              try { cb(...a); } catch {}
+            };
+            return oI(wrappedCb, (d || 0) / divisor);
+          }
+          return oI(cb, d, ...a);
         };
         console.log('[pahe-auto] Dynamic timer speedup interceptors installed');
       } catch (err) {
@@ -290,8 +311,10 @@ export function getInjectedAutomationScript(config = {}) {
       if (activeRule.cleanOverlays) removeAdOverlays();
 
       const isStealthDomain = /pahe\\.plus|old\\.pahe\\.plus|ouo\\.(io|press)/i.test(site);
+      const hasGetLink = document.querySelector('a.get-link, a.btn-success, .get-link a');
       if (
         isStealthDomain &&
+        !hasGetLink &&
         (document.querySelector('input[name="action"][value="captcha"]') ||
          document.querySelector('.h-captcha, .g-recaptcha, #captchaShortlink, #captcha, #recaptcha, .cf-turnstile') ||
          window.hcaptcha || window.grecaptcha || window.turnstile) &&
@@ -301,7 +324,8 @@ export function getInjectedAutomationScript(config = {}) {
       }
 
       const delayMs = window.__paheDelayMs || 1500;
-      if (Date.now() - startTime < delayMs) return;
+      const skipDelay = !!hasGetLink;
+      if (!skipDelay && (Date.now() - startTime < delayMs)) return;
 
       clearOnclickAds();
       activeRule.run();
