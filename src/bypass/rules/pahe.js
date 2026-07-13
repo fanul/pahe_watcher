@@ -5,7 +5,10 @@
     try {
       // Step 2: countdown / submit form via AJAX
       const goForm = document.getElementById('go-link');
-      if (goForm && !window.__paheDone) {
+      const formDataInput = document.querySelector('input[name="ad_form_data"]');
+      const csrfInput = document.querySelector('input[name="_csrfToken"]');
+      
+      if (document.readyState === 'complete' && goForm && formDataInput && formDataInput.value && csrfInput && csrfInput.value && !window.__paheDone) {
         window.__paheDone = true;
         console.log('[pahe-auto] [pahe.plus] Step 2 detected. Initiating AJAX POST bypass...');
         

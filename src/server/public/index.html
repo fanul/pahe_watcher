@@ -170,20 +170,27 @@
           <legend>CAPTCHA & Cloudflare Bypass</legend>
           <label>Bypass Provider
             <select name="captchaProvider" id="captchaProviderSelect">
-              <option value="none">None</option>
-              <option value="manual">Manual (via GUI)</option>
-              <option value="2captcha">2Captcha API</option>
-              <option value="flaresolverr">FlareSolverr (Local Docker)</option>
-              <option value="byparr">ByParr (Local Docker)</option>
+              <option value="none">None (rely on stealth auto-pass)</option>
+              <option value="manual">Manual (via GUI, headful)</option>
+              <option value="2captcha">2Captcha API (Turnstile)</option>
+              <option value="capsolver">CapSolver API (best for Turnstile)</option>
+              <option value="flaresolverr">FlareSolverr (interstitial only — NOT ouo Turnstile)</option>
+              <option value="byparr">ByParr (interstitial only — NOT ouo Turnstile)</option>
             </select>
           </label>
-          
+
           <div id="cfg2Captcha" class="cfg-group hidden">
             <label>2Captcha API Key
               <input name="twoCaptchaApiKey" placeholder="Your 2Captcha API Key" />
             </label>
           </div>
-          
+
+          <div id="cfgCapSolver" class="cfg-group hidden">
+            <label>CapSolver API Key
+              <input name="capSolverApiKey" placeholder="Your CapSolver API Key (CAP-...)" />
+            </label>
+          </div>
+
           <div id="cfgFlareSolverr" class="cfg-group hidden">
             <label>FlareSolverr URL
               <input name="flaresolverrUrl" placeholder="http://localhost:8191" />
@@ -200,7 +207,11 @@
             <input name="startServicesOnStart" type="checkbox" /> Auto-start services with Docker
           </label>
           <div class="muted small" style="margin-top: 8px; color: var(--amber); border-left: 2px solid var(--amber); padding-left: 8px;">
-            ⚠️ <b>Note:</b> "Manual" captcha solving requires the Playwright <b>Browser mode</b> set to <b>headful</b> under Watcher Settings so the window is visible.
+            ⚠️ <b>ouo.io uses Cloudflare Turnstile.</b> With <b>Browser mode = auto</b>, choosing
+            <b>Manual</b> runs headful (solve it yourself in the window); <b>2Captcha / CapSolver</b>
+            run headless and mint the token automatically. The stealth engine (patchright) often makes
+            Turnstile auto-pass with <b>None</b>. <b>FlareSolverr / ByParr cannot solve ouo's in-form
+            Turnstile</b> — they only clear full-page "Under Attack" interstitials.
           </div>
         </fieldset>
 

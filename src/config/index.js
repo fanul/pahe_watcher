@@ -70,6 +70,8 @@ export function loadConfig() {
       speedUpPahe: envStr('BYPASS_SPEEDUP_PAHE', String(d.bypass.speedUpPahe)) === 'true',
       removeOuoAds: envStr('BYPASS_REMOVE_OUO_ADS', String(d.bypass.removeOuoAds)) === 'true',
       stealth: {
+        engine: envStr('BYPASS_STEALTH_ENGINE', d.bypass.stealth?.engine || 'patchright'),
+        chromeChannel: envStr('BYPASS_CHROME_CHANNEL', d.bypass.stealth?.chromeChannel ?? 'chrome'),
         disableAutomationFlag: envStr('BYPASS_STEALTH_DISABLE_AUTOMATION_FLAG', String(d.bypass.stealth?.disableAutomationFlag)) !== 'false',
         useStealthUserAgent: envStr('BYPASS_STEALTH_USE_STEALTH_USER_AGENT', String(d.bypass.stealth?.useStealthUserAgent)) !== 'false',
         maskWebdriver: envStr('BYPASS_STEALTH_MASK_WEBDRIVER', String(d.bypass.stealth?.maskWebdriver)) !== 'false',
@@ -80,6 +82,7 @@ export function loadConfig() {
       captcha: {
         provider: envStr('CAPTCHA_PROVIDER', d.bypass.captcha.provider),
         twoCaptchaApiKey: envStr('TWOCAPTCHA_API_KEY', d.bypass.captcha.twoCaptchaApiKey),
+        capSolverApiKey: envStr('CAPSOLVER_API_KEY', d.bypass.captcha.capSolverApiKey || ''),
         flaresolverrUrl: envStr('FLARESOLVERR_URL', d.bypass.captcha.flaresolverrUrl),
         byparrUrl: envStr('BYPARR_URL', d.bypass.captcha.byparrUrl),
         startServicesOnStart: envStr('START_CAPTCHA_SERVICES', String(d.bypass.captcha.startServicesOnStart)) !== 'false',
