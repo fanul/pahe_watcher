@@ -103,6 +103,27 @@ function parseCookieString(cookieStr, domain) {
 export async function ensureGdflixLogin(page, credentials, ctx = {}) {
   const { email, password, cookies } = credentials || {};
 
+  const getLoginStatus = async () => {
+    return await page.evaluate(() => {
+      const hasLoginLink = Array.from(document.querySelectorAll('a')).some(a => {
+        const text = (a.textContent || '').trim().toLowerCase();
+        const href = a.getAttribute('href') || '';
+        return (text === 'log in' || text === 'login') && (href.endsWith('/login') || href.includes('/login?'));
+      });
+      const hasLogoutLink = Array.from(document.querySelectorAll('a')).some(a => {
+        const text = (a.textContent || '').trim().toLowerCase();
+        const href = a.getAttribute('href') || '';
+        return (text === 'log out' || text === 'logout') || href.includes('logout');
+      });
+      if (hasLogoutLink) return 'logged-in';
+      if (hasLoginLink) return 'logged-out';
+      return 'unknown';
+    });
+  };
+
+  let initialStatus = await getLoginStatus();
+  ctx.log?.(`[GDFlix] Initial page check: status is "${initialStatus}"`);
+
   if (cookies) {
     try {
       const hostname = new URL(page.url()).hostname;
@@ -111,26 +132,23 @@ export async function ensureGdflixLogin(page, credentials, ctx = {}) {
       const parsed = parseCookieString(cookies, domain);
       
       if (parsed.length > 0) {
-        ctx.log?.(`Injecting ${parsed.length} GDFlix session cookies...`);
+        ctx.log?.(`[GDFlix] Injecting ${parsed.length} session cookies...`);
         await page.context().addCookies(parsed);
         
-        // Check if we need to reload to apply injected cookies
-        const needsReload = await page.evaluate(() => {
-          return !!(document.querySelector('input[type="password"]') || document.querySelector('a[href*="login"]'));
-        });
-        if (needsReload) {
-          ctx.log?.('Reloading GDFlix page to apply session cookies...');
+        // Reload if not already logged in to apply session cookies
+        if (initialStatus !== 'logged-in') {
+          ctx.log?.('[GDFlix] Reloading page to apply cookies...');
           await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
         }
 
-        const needsLoginAfter = await page.evaluate(() => {
-          return !!(document.querySelector('input[type="password"]') || document.querySelector('a[href*="login"]'));
-        });
-        if (!needsLoginAfter) {
-          ctx.log?.('GDFlix authenticated successfully via cookies.');
-          return { loggedIn: true };
+        const postCookieStatus = await getLoginStatus();
+        ctx.log?.(`[GDFlix] Post-cookie check: status is "${postCookieStatus}"`);
+
+        if (postCookieStatus === 'logged-in') {
+          ctx.log?.('[GDFlix] Authenticated successfully using cookies.');
+          return { loggedIn: true, method: 'cookies' };
         } else {
-          ctx.log?.('GDFlix cookie login failed or session expired. Falling back to credentials...');
+          ctx.log?.('[GDFlix] Cookie login failed or session expired.');
         }
       }
     } catch (err) {
@@ -138,20 +156,38 @@ export async function ensureGdflixLogin(page, credentials, ctx = {}) {
     }
   }
 
-  if (!email || !password) return { loggedIn: false, skipped: true };
+  // Check if we are already logged in before trying credentials
+  const currentStatus = await getLoginStatus();
+  if (currentStatus === 'logged-in') {
+    ctx.log?.('[GDFlix] Already logged in (using existing browser session).');
+    return { loggedIn: true, method: 'session' };
+  }
+
+  if (!email || !password) {
+    ctx.log?.('[GDFlix] No credentials configured. Skipping login form fallback.');
+    return { loggedIn: false, skipped: true };
+  }
+
   try {
-    const needsLogin = await page.$('input[type="password"], a[href*="login"]');
-    if (!needsLogin) return { loggedIn: true };
-    ctx.log?.('Attempting GDFlix login…');
+    ctx.log?.('[GDFlix] Attempting credentials login (email/password)...');
     const loginLink = await page.$('a[href*="login"]');
     if (loginLink) await loginLink.click().catch(() => {});
     await page.fill('input[type="email"], input[name="email"]', email).catch(() => {});
     await page.fill('input[type="password"], input[name="password"]', password).catch(() => {});
     await page.click('button[type="submit"], input[type="submit"]').catch(() => {});
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    return { loggedIn: true };
+
+    const finalStatus = await getLoginStatus();
+    ctx.log?.(`[GDFlix] Post-credentials check: status is "${finalStatus}"`);
+    if (finalStatus === 'logged-in') {
+      ctx.log?.('[GDFlix] Authenticated successfully using credentials.');
+      return { loggedIn: true, method: 'credentials' };
+    } else {
+      ctx.log?.('[GDFlix] Credentials login failed.');
+      return { loggedIn: false };
+    }
   } catch (err) {
-    log.warn('GDFlix login attempt failed', { error: String(err) });
+    log.warn('GDFlix credentials login attempt failed', { error: String(err) });
     return { loggedIn: false, error: String(err) };
   }
 }
