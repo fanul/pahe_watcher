@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { createLogger } from '../core/logger.js';
-import { pageAutomation } from './userscript.js';
+import { injectedAutomationScript } from './userscript.js';
 
 const log = createLogger('browser');
 
@@ -123,7 +123,7 @@ export class BrowserManager {
     }
 
     // Inject the ad-chain automation into every page/navigation.
-    await this.context.addInitScript(pageAutomation);
+    await this.context.addInitScript(injectedAutomationScript);
     return this.context;
   }
 
