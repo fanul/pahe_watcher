@@ -9,7 +9,7 @@ import {
   getPublicConfig,
   updateConfig,
   applyOverrides
-} from './app/configManager.js';
+} from './configManager.js';
 
 const log = createLogger('app');
 
