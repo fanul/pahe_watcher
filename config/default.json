@@ -22,7 +22,7 @@
     "timeoutSeconds": 180,
     "profileDir": "./data/browser-profile",
     "maxRetries": 2,
-    "speedUpExclusions": ["oii.la", "linegee.net", "tpi.li", "pahe.plus", "ouo.io", "ouo.press"],
+    "speedUpExclusions": ["oii.la", "linegee.net", "tpi.li", "pahe.plus"],
     "tabPruningWhitelist": ["pahe.plus", "old.pahe.plus", "ouo.io", "ouo.press", "gdflix", "drive.google", "pixeldrain", "pixeldra.in", "teknoasian.com", "spacetica.com", "oii.la", "linegee.net", "tpi.li", "wordcounter.icu", "about:blank"],
     "pruneAdTabs": false,
     "stealth": {

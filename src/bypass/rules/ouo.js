@@ -1,5 +1,5 @@
 {
-  speedup: false,
+  speedup: true,
   cleanOverlays: true,
   run: function() {
     try {
