@@ -57,7 +57,9 @@ export const AD_HOSTS = [
 ];
 
 // Combine them into a single self-contained string to inject into pages
-export const injectedAutomationScript = `
+export function getInjectedAutomationScript(config = {}) {
+  const injectOuo = config.bypass?.injectOuoScript !== false;
+  return `
   (function() {
     'use strict';
     if (window.self !== window.top) return; // Only main document
@@ -65,6 +67,14 @@ export const injectedAutomationScript = `
     window.__paheAuto = true;
 
     const site = window.location.hostname.replace(/^www\\./, '');
+
+    // Check if ouo injection is disabled
+    const injectOuo = ${injectOuo};
+    if (!injectOuo && /ouo\\.(io|press)/i.test(site)) {
+      console.log('[pahe-auto] Userscript injection is disabled for ouo.io');
+      return;
+    }
+
     const o = window.location.origin;
     const startTime = Date.now();
 
@@ -219,3 +229,4 @@ export const injectedAutomationScript = `
     document.addEventListener('DOMContentLoaded', tick);
   })();
 `;
+}

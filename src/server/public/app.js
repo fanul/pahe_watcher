@@ -201,6 +201,7 @@ $('#btnSettings').onclick = async () => {
   f.speedUpExclusions.value = (cfg.bypass.speedUpExclusions || []).join(', ');
   f.tabPruningWhitelist.value = (cfg.bypass.tabPruningWhitelist || []).join(', ');
   f.pruneAdTabs.checked = cfg.bypass.pruneAdTabs === true;
+  f.injectOuoScript.checked = cfg.bypass.injectOuoScript !== false;
 
   const stealth = cfg.bypass.stealth || {};
   f.stealth_disableAutomationFlag.checked = stealth.disableAutomationFlag !== false;
@@ -251,6 +252,7 @@ $('#settingsForm').addEventListener('submit', async (e) => {
       speedUpExclusions: splitList(f.speedUpExclusions.value),
       tabPruningWhitelist: splitList(f.tabPruningWhitelist.value),
       pruneAdTabs: f.pruneAdTabs.checked,
+      injectOuoScript: f.injectOuoScript.checked,
       stealth: {
         disableAutomationFlag: f.stealth_disableAutomationFlag.checked,
         useStealthUserAgent: f.stealth_useStealthUserAgent.checked,

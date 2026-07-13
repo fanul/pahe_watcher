@@ -156,6 +156,43 @@ export class BypassEngine {
           return { finalUrl: url, linkType: classifyFinalLink(url) };
         }
 
+        // Node-side ouo.io automation fallback when userscript is disabled/restricted
+        if (url && /ouo\.(io|press)/i.test(url)) {
+          await p.evaluate(() => {
+            if (window.__nodeDone) return;
+            function nodeFormSubmit(form) {
+              const btn = form.querySelector('#btn-main, button[type="submit"], button');
+              if (btn) {
+                btn.removeAttribute('disabled');
+                btn.click();
+                setTimeout(() => { try { form.submit(); } catch {} }, 100);
+              } else {
+                form.submit();
+              }
+            }
+
+            // Page 2: countdown / redirect
+            const goForm = document.getElementById('form-go');
+            if (goForm) {
+              window.__nodeDone = true;
+              console.log('[node-auto] Page 2: submitting form #form-go');
+              nodeFormSubmit(goForm);
+              return;
+            }
+
+            // Page 1: Turnstile Captcha page
+            const captchaForm = document.getElementById('form-captcha');
+            if (captchaForm) {
+              const cfres = document.querySelector('[name="cf-turnstile-response"]');
+              if (cfres && cfres.value) {
+                window.__nodeDone = true;
+                console.log('[node-auto] Page 1: Turnstile solved. Submitting #form-captcha');
+                nodeFormSubmit(captchaForm);
+              }
+            }
+          }).catch(() => {});
+        }
+
         // Reached GDFlix — run the resolver once.
         if (isGdflixUrl(url) && !handledGdflix) {
           handledGdflix = true;
