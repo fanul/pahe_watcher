@@ -2,10 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export function getPublicSheetsConfig(runtime, sheets) {
-  let serviceAccountKeyContent = '';
+  let clientEmail = '';
+  let hasKey = false;
   try {
     if (fs.existsSync(runtime.sheets.serviceAccountKey)) {
-      serviceAccountKeyContent = fs.readFileSync(runtime.sheets.serviceAccountKey, 'utf8');
+      hasKey = true;
+      const parsed = JSON.parse(fs.readFileSync(runtime.sheets.serviceAccountKey, 'utf8'));
+      clientEmail = parsed.client_email || '';
     }
   } catch {}
 
@@ -13,8 +16,8 @@ export function getPublicSheetsConfig(runtime, sheets) {
     sheetId: runtime.sheets.sheetId,
     tab: runtime.sheets.tab,
     configured: sheets.enabled,
-    serviceAccountKey: runtime.sheets.serviceAccountKey,
-    serviceAccountKeyContent,
+    hasKey,
+    clientEmail,
   };
 }
 
