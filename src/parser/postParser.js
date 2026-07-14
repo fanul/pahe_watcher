@@ -210,4 +210,73 @@ export function selectOptions(options, { providers = [], qualities = [], codecs 
   return result;
 }
 
+export function parsePostMetadata(html) {
+  const $ = cheerio.load(html);
+  
+  // 1. Poster Image
+  let poster = $('.imdbwp__img').attr('src') || $('.imdbwp__thumb img').attr('src') || '';
+  if (!poster) {
+    $('img').each((_, el) => {
+      const src = $(el).attr('src');
+      if (src && !src.includes('hitcounter') && !src.includes('avatar') && !src.includes('download.png') && !src.includes('favicon')) {
+        poster = src;
+        return false; // break
+      }
+    });
+  }
+
+  // 2. IMDb Rating
+  let rating = $('.imdbwp__star').first().text().trim() || '';
+  if (!rating) {
+    const textContent = $.text();
+    const imdbMatch = textContent.match(/IMDb\s*(?:Rating)?\s*:\s*([\d.]+)(?:\/\d+)?/i);
+    if (imdbMatch) {
+      rating = imdbMatch[1];
+    }
+  }
+
+  // 3. Synopsis
+  let synopsis = $('.imdbwp__teaser').first().text().trim() || '';
+  if (!synopsis) {
+    let synopsisEl = null;
+    $('p, div, b, strong, h3').each((_, el) => {
+      const text = $(el).text().trim().toLowerCase();
+      if (text === 'synopsis' || text === 'storyline' || text.startsWith('story:')) {
+        synopsisEl = el;
+        return false; // break
+      }
+    });
+
+    if (synopsisEl) {
+      let next = $(synopsisEl).next();
+      if (next.length && next.text().trim()) {
+        synopsis = next.text().trim();
+      } else {
+        let parentNext = $(synopsisEl).parent().next();
+        if (parentNext.length) {
+          synopsis = parentNext.text().trim();
+        }
+      }
+    }
+  }
+
+  // Fallback: grab first paragraph that is long enough and not technical specs
+  if (!synopsis) {
+    $('p').each((_, el) => {
+      const $el = $(el);
+      const text = $el.text().trim();
+      if (text.length > 50 && !$el.find('a').length && !/kbps|gb|mb|pixels|resolutions|imdb/i.test(text) && !text.includes('cookie')) {
+        synopsis = text;
+        return false; // break
+      }
+    });
+  }
+
+  if (synopsis.length > 300) {
+    synopsis = synopsis.slice(0, 300) + '...';
+  }
+
+  return { poster, rating, synopsis };
+}
+
 export default parseDownloadOptions;

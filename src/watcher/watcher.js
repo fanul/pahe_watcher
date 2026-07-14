@@ -1,7 +1,7 @@
 import { createLogger } from '../core/logger.js';
 import { bus } from '../core/eventBus.js';
 import { PaheClient } from './paheClient.js';
-import { parseDownloadOptions, selectOptions, checkIsSeries } from '../parser/postParser.js';
+import { parseDownloadOptions, selectOptions, checkIsSeries, parsePostMetadata } from '../parser/postParser.js';
 
 const log = createLogger('watcher');
 
@@ -81,12 +81,16 @@ export class Watcher {
   async _handleNewPost(post) {
     log.info(`New post: ${post.title}`, { id: post.id });
     let options = [];
+    let meta = { poster: '', rating: '', synopsis: '' };
     try {
       const full = await this.client.getPost(post.id);
       options = parseDownloadOptions(full.contentHtml);
+      meta = parsePostMetadata(full.contentHtml);
     } catch (err) {
       log.warn('Failed to fetch/parse post content', { id: post.id, error: String(err) });
     }
+
+    const isSeries = checkIsSeries(post.title, options);
 
     const entry = {
       id: post.id,
@@ -95,6 +99,10 @@ export class Watcher {
       date: post.date,
       seenAt: new Date().toISOString(),
       options,
+      poster: meta.poster,
+      rating: meta.rating,
+      synopsis: meta.synopsis,
+      isSeries,
     };
     this.store.markPost(entry);
     bus.emit('post:new', entry);
@@ -104,8 +112,6 @@ export class Watcher {
       return;
     }
 
-    const isSeries = checkIsSeries(post.title, options);
-    
     if (isSeries && this.config.watcher.onlyCompleteSeries && !/complete/i.test(post.title)) {
       log.info('Skipping auto-resolve for in-progress series (does not contain "Complete" in title)', { id: post.id, title: post.title });
       return;

@@ -1,6 +1,6 @@
 import express from 'express';
 import { bus } from '../../core/eventBus.js';
-import { selectOptions, checkIsSeries, parseDownloadOptions } from '../../parser/postParser.js';
+import { selectOptions, checkIsSeries, parseDownloadOptions, parsePostMetadata } from '../../parser/postParser.js';
 
 /**
  * REST API. Receives the wired application context (`app`) and exposes control
@@ -101,15 +101,42 @@ export function createApiRouter(app) {
 
         for (const post of posts) {
           const existing = store.getPost(post.id);
+          
+          let options = existing?.options || [];
+          let poster = existing?.poster || '';
+          let rating = existing?.rating || '';
+          let synopsis = existing?.synopsis || '';
+          let isSeries = existing?.isSeries ?? false;
+
+          // Fetch full content if it is missing metadata
+          if (!existing || !existing.synopsis || !existing.poster || !existing.options || existing.options.length === 0) {
+            try {
+              const full = await watcher.client.getPost(post.id);
+              options = parseDownloadOptions(full.contentHtml);
+              const meta = parsePostMetadata(full.contentHtml);
+              poster = meta.poster;
+              rating = meta.rating;
+              synopsis = meta.synopsis;
+              isSeries = checkIsSeries(post.title, options);
+            } catch (err) {
+              log.warn(`Crawl: Failed to fetch/parse details for post ${post.id}`, { error: String(err) });
+            }
+          }
+
           const entry = {
             id: post.id,
             title: post.title,
             link: post.link,
             date: post.date,
             seenAt: existing?.seenAt || new Date().toISOString(),
-            options: existing?.options || [], // lazy-loaded on demand
+            options,
+            poster,
+            rating,
+            synopsis,
+            isSeries,
             pageFound: page
           };
+          
           store.markPost(entry);
           bus.emit('post:new', entry); // render in posts list
           results.push(entry);

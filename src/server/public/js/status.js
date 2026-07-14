@@ -13,7 +13,9 @@ export function renderStatus(s, state) {
     pill(q.running ? 'ok' : '', q.running ? 'ok' : '', 'Queue', `${q.running}▶ ${q.queued}⏳`),
     pill('ok', 'ok', 'Done', q.done),
     pill(q.failed ? 'bad' : '', q.failed ? 'bad' : '', 'Failed', q.failed),
-    pill(s.sheets.configured ? 'ok' : 'warn', s.sheets.configured ? 'ok' : 'warn', 'Sheets', s.sheets.configured ? 'on' : 'off'),
+    s.sheets.configured
+      ? `<a href="https://docs.google.com/spreadsheets/d/${s.sheets.sheetId}" target="_blank" rel="noopener" class="pill ok"><span class="dot ok"></span>Sheets <b>on ↗</b></a>`
+      : `<span class="pill warn"><span class="dot warn"></span>Sheets <b>off</b></span>`,
   ].join('');
   
   $('#btnWatcher').textContent = w.paused ? 'Resume watcher' : 'Pause watcher';

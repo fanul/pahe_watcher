@@ -135,6 +135,31 @@ $('#btnClearAllJobs').onclick = async () => {
   }
 };
 
+// ── filters change listeners ──
+['#filterType', '#filterProvider', '#filterResolution', '#filterCodec'].forEach((sel) => {
+  $(sel)?.addEventListener('change', () => renderPosts(state));
+});
+$('#filterSearch')?.addEventListener('input', () => renderPosts(state));
+
+// ── log widget toggle ──
+const logWidget = $('#logWidget');
+const btnToggleLogWidget = $('#btnToggleLogWidget');
+const logWidgetHeader = $('#logWidgetHeader');
+
+if (logWidget && logWidgetHeader && btnToggleLogWidget) {
+  const toggle = () => {
+    const isMin = logWidget.classList.contains('minimized');
+    if (isMin) {
+      logWidget.classList.remove('minimized');
+      btnToggleLogWidget.textContent = '▼';
+    } else {
+      logWidget.classList.add('minimized');
+      btnToggleLogWidget.textContent = '▲';
+    }
+  };
+  logWidgetHeader.onclick = toggle;
+}
+
 // ── boot ──
 initCrawl(refreshAll);
 initSettings(refreshAll);

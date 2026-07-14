@@ -33,6 +33,51 @@
       </div>
       
       <div id="panelNewPosts" class="tab-content">
+        <!-- Global Filter Bar -->
+        <div class="filter-bar">
+          <div class="filter-group" style="grid-column: 1 / -1;">
+            <label for="filterSearch">Search Title</label>
+            <input id="filterSearch" type="text" placeholder="Search keywords (flexible)..." class="filter-select" style="cursor: text;" />
+          </div>
+          <div class="filter-group">
+            <label for="filterType">Type</label>
+            <select id="filterType" class="filter-select">
+              <option value="all">All Types</option>
+              <option value="movie">Movies (Box Office)</option>
+              <option value="series">TV Series</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterProvider">Provider</label>
+            <select id="filterProvider" class="filter-select">
+              <option value="all">All Providers</option>
+              <option value="GD">GDFlix</option>
+              <option value="1F">1Fichier</option>
+              <option value="MG">Mega</option>
+              <option value="VF">VidFast</option>
+              <option value="TB">TeraBox</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterResolution">Resolution</label>
+            <select id="filterResolution" class="filter-select">
+              <option value="all">All Resolutions</option>
+              <option value="480p">480p</option>
+              <option value="720p">720p</option>
+              <option value="1080p">1080p</option>
+              <option value="2160p">2160p</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterCodec">Codec</label>
+            <select id="filterCodec" class="filter-select">
+              <option value="all">All Codecs</option>
+              <option value="x264">x264</option>
+              <option value="x265">x265</option>
+            </select>
+          </div>
+        </div>
+
         <div id="posts" class="list"></div>
       </div>
       
@@ -51,6 +96,7 @@
       </div>
     </section>
 
+    <!-- Jobs Panel -->
     <section class="panel">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
         <h2 style="margin: 0;">Jobs <span class="muted" id="jobStats"></span></h2>
@@ -65,12 +111,20 @@
       </form>
       <div id="jobs" class="list"></div>
     </section>
-
-    <section class="panel logs">
-      <h2>Live log</h2>
-      <div id="log" class="logbox"></div>
-    </section>
   </main>
+
+  <!-- Floating Live System Logs Widget -->
+  <div id="logWidget" class="log-widget glass minimized">
+    <div class="log-widget-header" id="logWidgetHeader">
+      <div class="log-widget-title">⚡ Live System Logs</div>
+      <div class="log-widget-actions">
+        <button type="button" id="btnToggleLogWidget" class="log-widget-btn">▲</button>
+      </div>
+    </div>
+    <div class="log-widget-body">
+      <div id="log" class="logbox"></div>
+    </div>
+  </div>
 
   <dialog id="settingsDialog">
     <form method="dialog" id="settingsForm">

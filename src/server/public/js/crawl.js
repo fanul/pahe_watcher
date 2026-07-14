@@ -32,13 +32,64 @@ export function initCrawl(refreshAll) {
     }
     
     crawlResults.innerHTML = results.map(r => {
-      return `<div class="card">
-        <div class="title">${esc(r.title)}</div>
-        <div class="meta">Found on <b>Page ${r.pageFound}</b> · <a href="${r.link}" target="_blank" rel="noopener">post ↗</a></div>
-        <div class="actions">
-          <button class="btn small" data-resolve-post="${r.id}">Resolve preferred</button>
+      const allOpts = r.options || [];
+      const rows = allOpts.map((o) => {
+        let codec = 'x264';
+        if (/x265|hevc|10bit/i.test(o.qualityLabel || '')) {
+          codec = 'x265';
+        } else if (/av1/i.test(o.qualityLabel || '')) {
+          codec = 'AV1';
+        }
+        const size = o.sizeLabel || 'N/A';
+        const realIdx = allOpts.indexOf(o);
+
+        return `
+          <div class="chip-row">
+            <div class="chip-info">
+              <span class="chip-provider ${o.provider === 'GD' ? 'gd' : ''}">${o.provider}</span>
+              <span class="chip-meta">${o.quality || 'unknown'} · ${codec} · ${size}</span>
+            </div>
+            <button type="button" class="chip-action" data-post="${r.id}" data-idx="${realIdx}" style="background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;">Resolve ↗</button>
+          </div>
+        `;
+      }).join('');
+
+      const posterHtml = r.poster
+        ? `<img src="${r.poster}" alt="Poster" referrerpolicy="no-referrer" />`
+        : `<div class="poster-placeholder">🎬</div>`;
+
+      const ratingHtml = r.rating
+        ? `<span class="rating-badge">★ ${r.rating}</span>`
+        : '';
+
+      const isSeries = r.isSeries ?? /season|episode|web-dl\s+\[ep|s\d+e\d+|\bs\d+\b/i.test(r.title);
+      const typeLabel = isSeries ? 'TV Series' : 'Movie';
+
+      return `
+        <div class="card">
+          <div class="card-poster">${posterHtml}</div>
+          <div class="card-content">
+            <div class="title" title="${esc(r.title)}">${esc(r.title)}</div>
+            <div class="meta">
+              ${ratingHtml}
+              <span>${typeLabel}</span>
+              <span>·</span>
+              <span>Found on Page ${r.pageFound}</span>
+              <span>·</span>
+              <a href="${r.link}" target="_blank" rel="noopener">Origin Post ↗</a>
+            </div>
+            <div class="synopsis" title="${esc(r.synopsis || 'No synopsis available.')}">
+              ${esc(r.synopsis || 'No synopsis available.')}
+            </div>
+            <div class="chips">
+              ${rows || '<span class="muted">No links parsed</span>'}
+            </div>
+            <div class="actions">
+              <button class="btn small" data-resolve-post="${r.id}">Resolve preferred</button>
+            </div>
+          </div>
         </div>
-      </div>`;
+      `;
     }).join('');
   }
 }
