@@ -156,6 +156,48 @@ test('runLivePoll reproduces skip-seen, auto-resolve, and onlyCompleteSeries beh
   assert.equal(store.getMeta('lastPollAt') !== null, true);
 });
 
+test('sweepMetadataBackfill fills in year/genre/director for posts synced under an older parser', async (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  // Two posts already deep-synced (have options/synopsis, so content_synced_at is set)
+  // but predate the extended-metadata parser — no year/genre/etc yet.
+  store.markPost({
+    id: 1, title: 'Backrooms', link: 'https://pahe.ink/backrooms', date: '2026-01-01', synopsis: 'old synopsis',
+    options: [{ provider: 'GD', quality: '1080p', url: 'https://teknoasian.com/?ht=a' }],
+  });
+  store.markPost({
+    id: 2, title: 'Never Synced', link: 'https://pahe.ink/never-synced', date: '2026-01-02', options: [],
+  });
+
+  const richHtml = `
+    <div class="imdbwp__header"><span class="imdbwp__title">Backrooms</span> (2026)</p>
+    <div class="imdbwp__meta"><span>110 min</span>|<span>Horror, Sci-Fi</span>|<span>29 May 2026</span></div>
+    <div class="imdbwp__teaser">Refreshed synopsis</div>
+    <div class="imdbwp__footer"><strong>Director:</strong> <span>Kane Parsons</span></div>
+  `;
+  const client = {
+    async getPost(id) {
+      return { id, date: '2026-01-01T00:00:00', link: 'https://pahe.ink/backrooms', title: 'Backrooms', contentHtml: richHtml };
+    },
+  };
+  const engine = new SyncEngine({ config: BASE_CONFIG, store, client, queue: fakeQueue() });
+
+  assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [1]); // post 2 was never deep-synced — not this sweep's job
+  assert.equal(store.countPostsMissingExtendedMetadata(), 1);
+
+  const result = await engine.sweepMetadataBackfill({ batchSize: 10 });
+  assert.equal(result.processed, 1);
+  assert.equal(result.remaining, 0);
+
+  const post = store.getPost(1);
+  assert.equal(post.year, 2026);
+  assert.equal(post.genre, 'Horror, Sci-Fi');
+  assert.equal(post.durationMinutes, 110);
+  assert.equal(post.director, 'Kane Parsons');
+  assert.deepEqual(store.listPostsMissingExtendedMetadata(10), []);
+});
+
 test('runLivePoll skips auto-resolve for an in-progress series without "Complete" in the title', async (t) => {
   const { store, dir } = tmpStore();
   t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });

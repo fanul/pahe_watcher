@@ -177,6 +177,7 @@ test('countPosts / countJobs / listUnsyncedPostIds / countUnsyncedPosts', (t) =>
 function seedForQuery(store) {
   store.markPost({
     id: 1, title: 'Dragon Warriors', link: 'l1', date: '2026-01-05', isSeries: false, synopsis: 'Epic dragon battle',
+    year: 2026, genre: 'Action, Fantasy', durationMinutes: 130, director: 'Alice Director', actors: 'Actor One, Actor Two',
     options: [
       { provider: 'GD', quality: '720p', qualityLabel: '720p x264', url: 'u1' },
       { provider: 'GD', quality: '1080p', qualityLabel: '1080p x265 10Bit', url: 'u2' },
@@ -184,14 +185,17 @@ function seedForQuery(store) {
   });
   store.markPost({
     id: 2, title: 'Space Odyssey', link: 'l2', date: '2026-01-04', isSeries: false, synopsis: 'A journey to the stars',
+    year: 2020, genre: 'Sci-Fi', durationMinutes: 85,
     options: [{ provider: '1F', quality: '720p', qualityLabel: '720p x264', url: 'u3' }],
   });
   store.markPost({
     id: 3, title: 'Dragon Kingdom Season 1', link: 'l3', date: '2026-01-03', isSeries: true, synopsis: 'Dragons rule the kingdom',
+    year: 2024, genre: 'Fantasy, Drama', creator: 'Bob Creator', actors: 'Actor Three',
     options: [{ provider: 'GD', quality: '1080p', qualityLabel: '1080p x265', url: 'u4' }],
   });
   store.markPost({ id: 4, title: 'Random Comedy', link: 'l4', date: '2026-01-02', isSeries: false, synopsis: 'Funny stuff', options: [] });
   store.markPost({
+    // Synced (has options), but no year/genre — simulates a post deep-synced under the older parser.
     id: 5, title: 'Old Movie', link: 'l5', date: '2026-01-01', isSeries: false, synopsis: '',
     options: [{ provider: 'GD', quality: '2160p', qualityLabel: '2160p x264', url: 'u5' }],
   });
@@ -271,4 +275,89 @@ test('queryJobs: pagination returns bounded pages newest-first with an accurate 
 
   const page2 = store.queryJobs({ limit: 2, offset: 2 });
   assert.deepEqual(page2.items.map((j) => j.id), ['j1']);
+});
+
+test('queryPosts: genre/year/duration filters', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  // genre is a comma-list; substring match against the raw stored string
+  assert.deepEqual(store.queryPosts({ genre: 'Fantasy' }).items.map((p) => p.id).sort(), [1, 3]);
+
+  assert.deepEqual(store.queryPosts({ year: 2020 }).items.map((p) => p.id), [2]);
+  assert.equal(store.queryPosts({ year: 1999 }).items.length, 0);
+
+  // duration buckets: short <90, medium 90-150, long >150. Posts without a duration never match.
+  assert.deepEqual(store.queryPosts({ duration: 'short' }).items.map((p) => p.id), [2]);
+  assert.deepEqual(store.queryPosts({ duration: 'medium' }).items.map((p) => p.id), [1]);
+  assert.equal(store.queryPosts({ duration: 'long' }).items.length, 0);
+});
+
+test('queryPosts: sort whitelist controls ORDER BY (title, year)', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  const byTitleAsc = store.queryPosts({ sort: 'title_asc' }).items.map((p) => p.title);
+  assert.deepEqual(byTitleAsc, [...byTitleAsc].sort((a, b) => a.localeCompare(b)));
+
+  // year_desc: posts with a year come first, highest first (2026, 2024, 2020), then NULLs last (4, 5)
+  const byYearDesc = store.queryPosts({ sort: 'year_desc' }).items.map((p) => p.id);
+  assert.deepEqual(byYearDesc.slice(0, 3), [1, 3, 2]);
+
+  // an unrecognized sort value falls back to the default (date_desc) instead of throwing
+  assert.doesNotThrow(() => store.queryPosts({ sort: 'not-a-real-sort; DROP TABLE posts' }));
+});
+
+test('queryPosts: search also matches director/creator/actors via FTS', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  assert.deepEqual(store.queryPosts({ search: 'Alice' }).items.map((p) => p.id), [1]);
+  assert.deepEqual(store.queryPosts({ search: 'Condal' }).items.map((p) => p.id), []); // "Ryan J. Condal" wasn't seeded — sanity check for no false positives
+  assert.deepEqual(store.queryPosts({ search: 'Creator' }).items.map((p) => p.id), [3]);
+});
+
+test('queryPosts: hasDeadJob is derived from a matching dead job by post_link', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  store.upsertJob({
+    id: 'dead-job', status: 'dead', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    postLink: 'l1', title: 'x', provider: 'GD', quality: '720p', url: 'u1',
+  });
+
+  const items = store.queryPosts({}).items;
+  const post1 = items.find((p) => p.id === 1);
+  const post2 = items.find((p) => p.id === 2);
+  assert.equal(post1.hasDeadJob, true);
+  assert.equal(post2.hasDeadJob, false);
+});
+
+test('getPostFacets returns distinct years (desc) and flattened genre tokens', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  const facets = store.getPostFacets();
+  assert.deepEqual(facets.years, [2026, 2024, 2020]);
+  assert.deepEqual(facets.genres, ['Action', 'Drama', 'Fantasy', 'Sci-Fi'].sort((a, b) => a.localeCompare(b)));
+});
+
+test('listPostsMissingExtendedMetadata / countPostsMissingExtendedMetadata: synced posts missing year/genre only', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  // posts 4 and 5 both count as "synced" (a synopsis alone sets content_synced_at, same as having
+  // options) but neither has year/genre — both are targets of the metadata-backfill sweep.
+  assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [4, 5]);
+  assert.equal(store.countPostsMissingExtendedMetadata(), 2);
+
+  store.markPost({ ...store.getPost(4), id: 4, year: 2015, genre: 'Comedy' });
+  assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [5]);
+  assert.equal(store.countPostsMissingExtendedMetadata(), 1);
 });

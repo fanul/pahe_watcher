@@ -18,6 +18,19 @@ const JOB_FIELD_TO_COLUMN = {
   qualityLabel: 'quality_label', sizeLabel: 'size_label', url: 'url', logs: 'logs', result: 'result', error: 'error',
 };
 
+// Whitelisted ORDER BY clauses for queryPosts's `sort` param — never
+// string-interpolated from the caller directly, to avoid SQL injection.
+const SORT_CLAUSES = {
+  date_desc: 'posts.date DESC',
+  date_asc: 'posts.date ASC',
+  rating_desc: 'CAST(posts.rating AS REAL) DESC NULLS LAST',
+  rating_asc: 'CAST(posts.rating AS REAL) ASC NULLS LAST',
+  year_desc: 'posts.year DESC NULLS LAST',
+  year_asc: 'posts.year ASC NULLS LAST',
+  title_asc: 'posts.title COLLATE NOCASE ASC',
+  title_desc: 'posts.title COLLATE NOCASE DESC',
+};
+
 /**
  * SQLite-backed persistence (node:sqlite, built into Node 22+). Same public
  * surface as the original JSON-file store — hasSeenPost/getPost/markPost/
@@ -47,12 +60,16 @@ export class Store {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ),
       upsertPost: this.db.prepare(`
-        INSERT INTO posts (id, title, link, date, seen_at, poster, rating, synopsis, is_series, page_found, content_synced_at)
-        VALUES (@id, @title, @link, @date, @seen_at, @poster, @rating, @synopsis, @is_series, @page_found, @content_synced_at)
+        INSERT INTO posts (id, title, link, date, seen_at, poster, rating, synopsis, is_series, page_found, content_synced_at,
+                            year, genre, duration_minutes, director, creator, actors)
+        VALUES (@id, @title, @link, @date, @seen_at, @poster, @rating, @synopsis, @is_series, @page_found, @content_synced_at,
+                @year, @genre, @duration_minutes, @director, @creator, @actors)
         ON CONFLICT(id) DO UPDATE SET
           title=excluded.title, link=excluded.link, date=excluded.date, seen_at=excluded.seen_at,
           poster=excluded.poster, rating=excluded.rating, synopsis=excluded.synopsis,
-          is_series=excluded.is_series, page_found=excluded.page_found, content_synced_at=excluded.content_synced_at
+          is_series=excluded.is_series, page_found=excluded.page_found, content_synced_at=excluded.content_synced_at,
+          year=excluded.year, genre=excluded.genre, duration_minutes=excluded.duration_minutes,
+          director=excluded.director, creator=excluded.creator, actors=excluded.actors
       `),
       countPosts: this.db.prepare('SELECT COUNT(*) AS n FROM posts'),
       countJobs: this.db.prepare('SELECT COUNT(*) AS n FROM jobs'),
@@ -70,6 +87,14 @@ export class Store {
       `),
       unsyncedPostIds: this.db.prepare('SELECT id FROM posts WHERE content_synced_at IS NULL ORDER BY id ASC LIMIT ?'),
       countUnsyncedPosts: this.db.prepare('SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NULL'),
+      missingExtendedMetadataIds: this.db.prepare(
+        'SELECT id FROM posts WHERE content_synced_at IS NOT NULL AND year IS NULL AND genre IS NULL ORDER BY id ASC LIMIT ?',
+      ),
+      countMissingExtendedMetadata: this.db.prepare(
+        'SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NOT NULL AND year IS NULL AND genre IS NULL',
+      ),
+      distinctYears: this.db.prepare('SELECT DISTINCT year FROM posts WHERE year IS NOT NULL ORDER BY year DESC'),
+      distinctGenres: this.db.prepare("SELECT DISTINCT genre FROM posts WHERE genre IS NOT NULL AND genre != ''"),
     };
 
     log.info('SQLite store ready', { path: sqlitePath, posts: this.countPosts(), jobs: this.countJobs() });
@@ -147,6 +172,12 @@ export class Store {
         is_series: post.isSeries === undefined || post.isSeries === null ? null : (post.isSeries ? 1 : 0),
         page_found: post.pageFound ?? null,
         content_synced_at: hasContent ? seenAt : null,
+        year: post.year ?? null,
+        genre: post.genre || null,
+        duration_minutes: post.durationMinutes ?? null,
+        director: post.director || null,
+        creator: post.creator || null,
+        actors: post.actors || null,
       });
       this._stmt.deletePostOptions.run(id);
       options.forEach((opt, i) => {
@@ -198,16 +229,26 @@ export class Store {
    *   - codec 'x264' means "not x265/hevc/10bit-flagged", matching the old
    *     client's isX265-based exclusion, not a literal "x264" substring
    *     requirement.
-   * Returns { items, total } — items shaped like listPosts()/getPost().
+   * `sort` picks an ORDER BY from a fixed whitelist (see SORT_CLAUSES) —
+   * never string-interpolated from the caller, to avoid SQL injection.
+   * Returns { items, total } — items shaped like listPosts()/getPost(), plus
+   * a derived `hasDeadJob` boolean (true if any job resolving one of this
+   * post's options is confirmed dead — see JobStatus.DEAD).
    */
-  queryPosts({ limit = 24, offset = 0, search = '', type = 'all', provider = 'all', quality = 'all', codec = 'all' } = {}) {
-    const { joinSql, whereSql, params } = this._buildPostsFilter({ search, type, provider, quality, codec });
+  queryPosts({
+    limit = 24, offset = 0, search = '', type = 'all', provider = 'all', quality = 'all', codec = 'all',
+    genre = 'all', year = 'all', duration = 'all', sort = 'date_desc',
+  } = {}) {
+    const { joinSql, whereSql, params } = this._buildPostsFilter({ search, type, provider, quality, codec, genre, year, duration });
+    const orderSql = SORT_CLAUSES[sort] || SORT_CLAUSES.date_desc;
 
     const total = this.db.prepare(`SELECT COUNT(*) AS n FROM posts ${joinSql} ${whereSql}`).get(...params).n;
 
     const rows = this.db.prepare(`
-      SELECT posts.* FROM posts ${joinSql} ${whereSql}
-      ORDER BY posts.date DESC
+      SELECT posts.*,
+        EXISTS (SELECT 1 FROM jobs WHERE jobs.post_link = posts.link AND jobs.status = 'dead') AS has_dead_job
+      FROM posts ${joinSql} ${whereSql}
+      ORDER BY ${orderSql}
       LIMIT ? OFFSET ?
     `).all(...params, limit, offset);
 
@@ -229,7 +270,7 @@ export class Store {
     return { items, total };
   }
 
-  _buildPostsFilter({ search, type, provider, quality, codec }) {
+  _buildPostsFilter({ search, type, provider, quality, codec, genre = 'all', year = 'all', duration = 'all' }) {
     const joins = [];
     const where = [];
     const params = [];
@@ -244,6 +285,20 @@ export class Store {
 
     if (type === 'movie') where.push('posts.is_series = 0');
     else if (type === 'series') where.push('posts.is_series = 1');
+
+    if (genre && genre !== 'all') {
+      where.push('posts.genre LIKE ?');
+      params.push(`%${genre}%`);
+    }
+
+    if (year && year !== 'all') {
+      where.push('posts.year = ?');
+      params.push(Number(year));
+    }
+
+    if (duration === 'short') where.push('posts.duration_minutes IS NOT NULL AND posts.duration_minutes < 90');
+    else if (duration === 'medium') where.push('posts.duration_minutes BETWEEN 90 AND 150');
+    else if (duration === 'long') where.push('posts.duration_minutes IS NOT NULL AND posts.duration_minutes > 150');
 
     const hasLinkFilters = (provider && provider !== 'all') || (quality && quality !== 'all') || (codec && codec !== 'all');
     if (hasLinkFilters) {
@@ -276,6 +331,28 @@ export class Store {
     return this._stmt.countUnsyncedPosts.get().n;
   }
 
+  /** Post ids that have been deep-synced but predate the extended-metadata parser (year/genre/etc). */
+  listPostsMissingExtendedMetadata(limit = 20) {
+    return this._stmt.missingExtendedMetadataIds.all(limit).map((r) => r.id);
+  }
+
+  countPostsMissingExtendedMetadata() {
+    return this._stmt.countMissingExtendedMetadata.get().n;
+  }
+
+  /** Distinct genre/year values present in the archive, for populating filter dropdowns. */
+  getPostFacets() {
+    const years = this._stmt.distinctYears.all().map((r) => r.year);
+    const genreSet = new Set();
+    for (const row of this._stmt.distinctGenres.all()) {
+      for (const g of row.genre.split(',')) {
+        const trimmed = g.trim();
+        if (trimmed) genreSet.add(trimmed);
+      }
+    }
+    return { years, genres: [...genreSet].sort((a, b) => a.localeCompare(b)) };
+  }
+
   _hydratePost(row, options) {
     return {
       id: row.id,
@@ -288,6 +365,13 @@ export class Store {
       synopsis: row.synopsis || '',
       isSeries: row.is_series === null ? null : Boolean(row.is_series),
       pageFound: row.page_found ?? undefined,
+      year: row.year ?? null,
+      genre: row.genre || '',
+      durationMinutes: row.duration_minutes ?? null,
+      director: row.director || '',
+      creator: row.creator || '',
+      actors: row.actors || '',
+      hasDeadJob: row.has_dead_job === undefined ? undefined : Boolean(row.has_dead_job),
       options: options ?? this._stmt.getPostOptions.all(row.id).map((r) => this._hydrateOption(r)),
     };
   }

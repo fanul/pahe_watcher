@@ -14,7 +14,49 @@ function currentFilters() {
     provider: $('#filterProvider')?.value || 'all',
     quality: $('#filterResolution')?.value || 'all',
     codec: $('#filterCodec')?.value || 'all',
+    genre: $('#filterGenre')?.value || 'all',
+    year: $('#filterYear')?.value || 'all',
+    duration: $('#filterDuration')?.value || 'all',
+    sort: $('#filterSort')?.value || 'date_desc',
   };
+}
+
+/** Populate the Genre/Year dropdowns from the archive's actual data (open-ended sets, unlike the static provider/quality/codec lists). Call once on boot. */
+export async function initPostFacets() {
+  const facets = await api('/posts/facets').catch(() => null);
+  if (!facets) return;
+
+  const genreSelect = $('#filterGenre');
+  if (genreSelect) {
+    for (const g of facets.genres) {
+      const opt = document.createElement('option');
+      opt.value = g;
+      opt.textContent = g;
+      genreSelect.appendChild(opt);
+    }
+  }
+
+  const yearSelect = $('#filterYear');
+  if (yearSelect) {
+    for (const y of facets.years) {
+      const opt = document.createElement('option');
+      opt.value = String(y);
+      opt.textContent = String(y);
+      yearSelect.appendChild(opt);
+    }
+  }
+}
+
+/** Call after a WS job:updated marks a job dead, so the affected post's card grays out without a full posts refetch. */
+export function markPostsWithDeadJob(state, postLink) {
+  let changed = false;
+  for (const p of state.posts) {
+    if (p.link === postLink && !p.hasDeadJob) {
+      p.hasDeadJob = true;
+      changed = true;
+    }
+  }
+  if (changed) renderPosts(state);
 }
 
 /**
@@ -102,8 +144,22 @@ export function renderPosts(state) {
     const isSeries = p.isSeries ?? /season|episode|web-dl\s+\[ep|s\d+e\d+|\bs\d+\b/i.test(p.title);
     const typeLabel = isSeries ? 'TV Series' : 'Movie';
 
+    const extraMetaParts = [];
+    if (p.year) extraMetaParts.push(String(p.year));
+    if (p.genre) extraMetaParts.push(esc(p.genre));
+    if (p.durationMinutes) extraMetaParts.push(`${p.durationMinutes} min`);
+    const extraMetaHtml = extraMetaParts.length
+      ? `<div class="meta small">${extraMetaParts.join(' · ')}</div>` : '';
+
+    const creditsParts = [];
+    if (p.director) creditsParts.push(`<b>Director:</b> ${esc(p.director)}`);
+    if (p.creator) creditsParts.push(`<b>Creator:</b> ${esc(p.creator)}`);
+    if (p.actors) creditsParts.push(`<b>Cast:</b> ${esc(p.actors)}`);
+    const creditsHtml = creditsParts.length
+      ? `<div class="meta small muted">${creditsParts.join(' &nbsp;·&nbsp; ')}</div>` : '';
+
     return `
-      <div class="card">
+      <div class="card${p.hasDeadJob ? ' dead-link' : ''}">
         <div class="card-poster">${posterHtml}</div>
         <div class="card-content">
           <div class="title" title="${esc(p.title)}">${esc(p.title)}</div>
@@ -111,10 +167,12 @@ export function renderPosts(state) {
             ${ratingHtml}
             <span>${typeLabel}</span>
             <span>·</span>
-            <span>${new Date(p.date).toLocaleDateString()}</span>
+            <span>${new Date(p.date).toLocaleString()}</span>
             <span>·</span>
             <a href="${p.link}" target="_blank" rel="noopener">Origin Post ↗</a>
           </div>
+          ${extraMetaHtml}
+          ${creditsHtml}
           <div class="synopsis" title="${esc(p.synopsis || 'No synopsis available.')}">
             ${esc(p.synopsis || 'No synopsis available.')}
           </div>

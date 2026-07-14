@@ -16,6 +16,7 @@ export const JobStatus = {
   DONE: 'done',
   FAILED: 'failed',
   CANCELLED: 'cancelled',
+  DEAD: 'dead', // confirmed-dead link (file removed/expired) — never auto-retried
 };
 
 /**
@@ -90,11 +91,11 @@ export class JobQueue {
     return false; // running jobs can't be cancelled synchronously (kept simple)
   }
 
-  /** Retry a failed/cancelled job. */
+  /** Retry a failed/cancelled/dead job. Dead is included so a misclassified job can be manually overridden — bulk retryAll() deliberately excludes it. */
   retry(jobId) {
     const job = this.store.getJob(jobId);
     if (!job) return false;
-    if ([JobStatus.FAILED, JobStatus.CANCELLED].includes(job.status)) {
+    if ([JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.DEAD].includes(job.status)) {
       this._update(job, { status: JobStatus.QUEUED, error: null });
       this.pending.push(job.id);
       this._drain();
@@ -144,8 +145,11 @@ export class JobQueue {
       log.info(`Job ${job.id.slice(0, 8)} done`);
     } catch (err) {
       const fresh = this.store.getJob(job.id);
-      const canRetry = (fresh.attempts || 1) <= this.maxRetries;
-      if (canRetry) {
+      const canRetry = !err?.dead && (fresh.attempts || 1) <= this.maxRetries;
+      if (err?.dead) {
+        log.error(`Job ${job.id.slice(0, 8)} confirmed dead, not retrying`, { error: String(err) });
+        this._update(fresh, { status: JobStatus.DEAD, error: String(err) });
+      } else if (canRetry) {
         log.warn(`Job ${job.id.slice(0, 8)} failed (attempt ${fresh.attempts}), requeueing`, {
           error: String(err),
         });

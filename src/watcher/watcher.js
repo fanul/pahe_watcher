@@ -96,6 +96,11 @@ export class Watcher {
     return this.syncEngine.sweepDeepSync(opts);
   }
 
+  /** Backfill year/genre/duration/director/creator/actors onto posts synced under an older parser. */
+  runMetadataBackfillSweep(opts) {
+    return this.syncEngine.sweepMetadataBackfill(opts);
+  }
+
   /** Explicit control over the backfill cursor (page/direction). */
   resetBackfill(opts) {
     return this.syncEngine.resetBackfillCursor(opts);

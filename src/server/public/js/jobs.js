@@ -51,9 +51,9 @@ export function renderJobs(state) {
     const final = j.result?.finalUrl
       ? `<a class="final-link" href="${j.result.finalUrl}" target="_blank" rel="noopener">🔗 ${j.result.linkType}: ${esc(j.result.finalUrl)}</a>` : '';
     const acts = [];
-    if (['failed', 'cancelled'].includes(j.status)) acts.push(`<button class="btn small muted" data-retry="${j.id}">Retry</button>`);
+    if (['failed', 'cancelled', 'dead'].includes(j.status)) acts.push(`<button class="btn small muted" data-retry="${j.id}">Retry</button>`);
     if (j.status === 'queued') acts.push(`<button class="btn small danger" data-cancel="${j.id}">Cancel</button>`);
-    if (['done', 'failed', 'cancelled'].includes(j.status)) acts.push(`<button class="btn small danger-btn" data-delete-job="${j.id}">Delete</button>`);
+    if (['done', 'failed', 'cancelled', 'dead'].includes(j.status)) acts.push(`<button class="btn small danger-btn" data-delete-job="${j.id}">Delete</button>`);
     const isSheetError = j.status === 'failed' && j.result?.finalUrl;
     const isSuccess = j.status === 'done';
 

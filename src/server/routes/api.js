@@ -44,7 +44,16 @@ export function createApiRouter(app) {
       provider: req.query.provider || 'all',
       quality: req.query.quality || 'all',
       codec: req.query.codec || 'all',
+      genre: req.query.genre || 'all',
+      year: req.query.year || 'all',
+      duration: req.query.duration || 'all',
+      sort: req.query.sort || 'date_desc',
     }));
+  });
+
+  // Distinct genre/year values present in the archive, for populating filter dropdowns.
+  router.get('/posts/facets', (req, res) => {
+    res.json(store.getPostFacets());
   });
 
   router.get('/posts/search', (req, res) => {
@@ -137,6 +146,18 @@ export function createApiRouter(app) {
   });
   router.get('/sync/deep-sync/status', (req, res) => {
     res.json({ pending: store.countUnsyncedPosts() });
+  });
+  router.post('/sync/metadata-backfill/run', async (req, res) => {
+    try {
+      const { batchSize } = req.body || {};
+      const result = await watcher.runMetadataBackfillSweep({ batchSize });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  router.get('/sync/metadata-backfill/status', (req, res) => {
+    res.json({ pending: store.countPostsMissingExtendedMetadata() });
   });
 
   // ── jobs ──

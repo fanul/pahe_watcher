@@ -76,6 +76,40 @@
               <option value="x265">x265</option>
             </select>
           </div>
+          <div class="filter-group">
+            <label for="filterGenre">Genre</label>
+            <select id="filterGenre" class="filter-select">
+              <option value="all">All Genres</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterYear">Year</label>
+            <select id="filterYear" class="filter-select">
+              <option value="all">All Years</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterDuration">Duration</label>
+            <select id="filterDuration" class="filter-select">
+              <option value="all">Any Duration</option>
+              <option value="short">Short (&lt;90 min)</option>
+              <option value="medium">Medium (90-150 min)</option>
+              <option value="long">Long (&gt;150 min)</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterSort">Sort by</label>
+            <select id="filterSort" class="filter-select">
+              <option value="date_desc">Newest first</option>
+              <option value="date_asc">Oldest first</option>
+              <option value="rating_desc">Rating (high-low)</option>
+              <option value="rating_asc">Rating (low-high)</option>
+              <option value="year_desc">Year (new-old)</option>
+              <option value="year_asc">Year (old-new)</option>
+              <option value="title_asc">Title (A-Z)</option>
+              <option value="title_desc">Title (Z-A)</option>
+            </select>
+          </div>
         </div>
 
         <div id="posts" class="list"></div>
@@ -107,6 +141,10 @@
         <div class="crawl-controls" style="margin-top: 8px;">
           <span id="deepSyncStatus" class="muted small"></span>
           <button id="btnDeepSyncSweep" class="btn small ghost">Deep-sync pending posts</button>
+        </div>
+        <div class="crawl-controls" style="margin-top: 8px;">
+          <span id="metadataBackfillStatus" class="muted small"></span>
+          <button id="btnMetadataBackfillSweep" class="btn small ghost">Backfill extended metadata</button>
         </div>
         <div id="crawlResults" class="list" style="margin-top: 12px;">
           <div class="muted" style="padding: 10px 0;">No batches run yet. Click "Run Batch" to start syncing.</div>

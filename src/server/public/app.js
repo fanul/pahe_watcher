@@ -2,7 +2,7 @@
 import { $, api, state, esc } from './js/state.js';
 import { upsert } from './js/utils.js';
 import { renderStatus } from './js/status.js';
-import { loadPosts, renderPosts, notePostInserted } from './js/posts.js';
+import { loadPosts, renderPosts, notePostInserted, initPostFacets, markPostsWithDeadJob } from './js/posts.js';
 import { loadJobs, renderJobs, noteJobInserted, noteJobsRemoved, resetJobsCleared } from './js/jobs.js';
 import { initCrawl, updateCrawlProgress } from './js/crawl.js';
 import { initSettings } from './js/settings.js';
@@ -59,6 +59,7 @@ function handleEvent(type, payload) {
       const inserted = upsert(state.jobs, payload, (j) => j.id);
       if (inserted) noteJobInserted();
       renderJobs(state);
+      if (payload.status === 'dead' && payload.postLink) markPostsWithDeadJob(state, payload.postLink);
       refreshStatusSoon();
       break;
     }
@@ -175,7 +176,7 @@ function refilterPostsSoon(delay = 300) {
   clearTimeout(filterDebounce);
   filterDebounce = setTimeout(() => loadPosts(state, { reset: true }), delay);
 }
-['#filterType', '#filterProvider', '#filterResolution', '#filterCodec'].forEach((sel) => {
+['#filterType', '#filterProvider', '#filterResolution', '#filterCodec', '#filterGenre', '#filterYear', '#filterDuration', '#filterSort'].forEach((sel) => {
   $(sel)?.addEventListener('change', () => refilterPostsSoon(0));
 });
 $('#filterSearch')?.addEventListener('input', () => refilterPostsSoon(300));
@@ -204,6 +205,7 @@ initCrawl(refreshAll);
 initSettings(refreshAll);
 initCaptcha();
 initManualJob(refreshAll);
+initPostFacets();
 
 refreshAll().catch((e) => appendLog({ ts: '', level: 'error', scope: 'ui', msg: String(e) }));
 connectWs();

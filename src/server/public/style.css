@@ -313,6 +313,24 @@ body {
   background: rgba(31, 41, 55, 0.7);
 }
 
+/* A confirmed-dead download link was found among this post's options. */
+.card.dead-link {
+  filter: grayscale(1) opacity(0.6);
+}
+
+.card.dead-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top right,
+    transparent calc(50% - 1.5px),
+    rgba(220, 38, 38, 0.85) 50%,
+    transparent calc(50% + 1.5px)
+  );
+  pointer-events: none;
+}
+
 .card-poster {
   width: 105px;
   height: 155px;
@@ -515,6 +533,7 @@ body {
 .job-status.failed { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.25); }
 .job-status.needs-captcha { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.25); }
 .job-status.cancelled { background: rgba(55, 65, 81, 0.15); color: var(--muted); border: 1px solid rgba(55, 65, 81, 0.25); }
+.job-status.dead { background: rgba(220, 38, 38, 0.15); color: #ef4444; border: 1px solid rgba(220, 38, 38, 0.35); }
 
 .joblog {
   font-family: ui-monospace, Menlo, Consolas, monospace;

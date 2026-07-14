@@ -6,14 +6,17 @@ export function initCrawl(refreshAll) {
   const btnStartCrawl = $('#btnStartCrawl');
   const btnResetCursor = $('#btnResetCursor');
   const btnDeepSyncSweep = $('#btnDeepSyncSweep');
+  const btnMetadataBackfillSweep = $('#btnMetadataBackfillSweep');
   const crawlProgress = $('#crawlProgress');
   const crawlResults = $('#crawlResults');
   const crawlMaxPages = $('#crawlMaxPages');
   const crawlDirection = $('#crawlDirection');
   const crawlDeepSync = $('#crawlDeepSync');
   const deepSyncStatus = $('#deepSyncStatus');
+  const metadataBackfillStatus = $('#metadataBackfillStatus');
 
   refreshDeepSyncStatus();
+  refreshMetadataBackfillStatus();
   refreshCursorStatus();
 
   btnStartCrawl.onclick = async () => {
@@ -64,9 +67,26 @@ export function initCrawl(refreshAll) {
     }
   };
 
+  btnMetadataBackfillSweep.onclick = async () => {
+    btnMetadataBackfillSweep.disabled = true;
+    try {
+      const res = await api('/sync/metadata-backfill/run', { method: 'POST', body: '{}' });
+      accumulated = [...res.entries, ...accumulated];
+      renderCrawlResults();
+      metadataBackfillStatus.textContent = `Backfilled ${res.processed} post(s), ${res.remaining} still pending.`;
+    } finally {
+      btnMetadataBackfillSweep.disabled = false;
+    }
+  };
+
   async function refreshDeepSyncStatus() {
     const res = await api('/sync/deep-sync/status').catch(() => null);
     if (res) deepSyncStatus.textContent = `${res.pending} post(s) pending deep sync.`;
+  }
+
+  async function refreshMetadataBackfillStatus() {
+    const res = await api('/sync/metadata-backfill/status').catch(() => null);
+    if (res) metadataBackfillStatus.textContent = `${res.pending} post(s) missing extended metadata (year/genre/cast).`;
   }
 
   async function refreshCursorStatus() {

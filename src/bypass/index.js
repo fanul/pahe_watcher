@@ -3,6 +3,7 @@ import { BrowserManager } from './browser.js';
 import { createCaptchaSolver, detectCaptcha } from './captcha/index.js';
 import { isGdflixUrl, resolveGdflix, classifyFinalLink } from './resolvers/gdflix.js';
 import { isGoogleAuthHost, ensureGoogleLogin, normalizeGoogleDriveLink } from './resolvers/googleDrive.js';
+import { isDeadLinkPage } from './deadLinkPatterns.js';
 
 const log = createLogger('bypass');
 
@@ -147,6 +148,7 @@ export class BypassEngine {
     const deadline = Date.now() + timeoutMs;
     let handledGdflix = false;
     let handledGoogleAuth = false;
+    const deadCheckedUrls = new Set();
 
     const WHITELIST_DOMAINS = this.config?.bypass?.tabPruningWhitelist || [
       'pahe.plus', 'old.pahe.plus', 'ouo.io', 'ouo.press', 'gdflix', 'drive.google', 
@@ -188,6 +190,18 @@ export class BypassEngine {
               await p.close().catch(() => {});
               continue;
             }
+          }
+        }
+
+        // Confirmed-dead file check — once per distinct URL landed on, so we
+        // don't re-evaluate the same static page every polling tick. Applies
+        // at any hop (shortener, GDFlix, or the final Drive/pixeldrain page
+        // itself), since "file removed" pages can appear anywhere in the chain.
+        if (url && url !== 'about:blank' && !deadCheckedUrls.has(url)) {
+          deadCheckedUrls.add(url);
+          const pageText = await p.evaluate(() => document.body?.innerText || '').catch(() => '');
+          if (isDeadLinkPage(pageText)) {
+            throw Object.assign(new Error(`Dead link detected at ${shorten(url)}`), { dead: true });
           }
         }
 
@@ -284,6 +298,7 @@ export class BypassEngine {
             ctx,
           ).catch((err) => {
             if (err?.terminal) throw err; // unrecoverable (e.g. login required) — stop looping, fail the job now
+            if (err?.dead) throw err; // confirmed-dead file — stop looping, mark the job dead
             ctx.log?.(`GDFlix resolve error: ${err.message}`);
             return null;
           });

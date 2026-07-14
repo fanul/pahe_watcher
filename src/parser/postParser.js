@@ -276,7 +276,33 @@ export function parsePostMetadata(html) {
     synopsis = synopsis.slice(0, 300) + '...';
   }
 
-  return { poster, rating, synopsis };
+  // 4. Release year (from the header, e.g. "Backrooms (2026)" or "House of the Dragon (2022–)")
+  const headerText = $('.imdbwp__header').first().text();
+  const yearMatch = headerText.match(/\((\d{4})/);
+  const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
+
+  // 5. Duration + genre (from the pipe-separated meta line, e.g. "110 min|Horror, Sci-Fi|29 May 2026")
+  const metaSpans = $('.imdbwp__meta').first().children('span');
+  const durationText = metaSpans.eq(0).text().trim();
+  const genreText = metaSpans.eq(1).text().trim();
+  const durationMatch = durationText.match(/(\d+)\s*min/i);
+  const durationMinutes = durationMatch ? parseInt(durationMatch[1], 10) : null;
+  const genre = genreText && genreText.toUpperCase() !== 'N/A' ? genreText : '';
+
+  // 6. Director/Creator/Actors (label-driven — series posts omit Director)
+  let director = '';
+  let creator = '';
+  let actors = '';
+  $('.imdbwp__footer').first().find('strong').each((_, el) => {
+    const label = $(el).text().replace(/:/g, '').trim().toLowerCase();
+    const value = $(el).next('span').text().trim();
+    if (!value) return;
+    if (label === 'director') director = value;
+    else if (label === 'creator') creator = value;
+    else if (/^actors?$/.test(label)) actors = value;
+  });
+
+  return { poster, rating, synopsis, year, genre, durationMinutes, director, creator, actors };
 }
 
 export default parseDownloadOptions;

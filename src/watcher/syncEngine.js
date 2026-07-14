@@ -69,7 +69,7 @@ export class SyncEngine {
   async deepSyncPost(postId) {
     const existing = this.store.getPost(postId);
     let options = [];
-    let meta = { poster: '', rating: '', synopsis: '' };
+    let meta = { poster: '', rating: '', synopsis: '', year: null, genre: '', durationMinutes: null, director: '', creator: '', actors: '' };
     let full;
     try {
       full = await this.client.getPost(postId);
@@ -93,6 +93,12 @@ export class SyncEngine {
       rating: meta.rating,
       synopsis: meta.synopsis,
       isSeries,
+      year: meta.year,
+      genre: meta.genre,
+      durationMinutes: meta.durationMinutes,
+      director: meta.director,
+      creator: meta.creator,
+      actors: meta.actors,
     };
     this.store.markPost(entry);
     bus.emit('post:new', entry);
@@ -281,6 +287,30 @@ export class SyncEngine {
     }
     const remaining = this.store.countUnsyncedPosts();
     log.info('Deep-sync sweep complete', { processed: entries.length, remaining });
+    return { processed: entries.length, remaining, entries };
+  }
+
+  /**
+   * Backfills year/genre/duration/director/creator/actors onto posts that
+   * were already deep-synced under an older parser version that didn't
+   * extract them. Distinct from sweepDeepSync: those posts already have
+   * content_synced_at set (and are skipped by it), so a separate selection
+   * (content_synced_at IS NOT NULL AND year/genre IS NULL) is needed. Reuses
+   * deepSyncPost as-is — it already captures the new fields for any post it
+   * touches, old or new.
+   */
+  async sweepMetadataBackfill({ batchSize } = {}) {
+    const cfg = this.config.sync || {};
+    batchSize = batchSize ?? cfg.metadataBackfillSweepBatchSize ?? 20;
+
+    const ids = this.store.listPostsMissingExtendedMetadata(batchSize);
+    const entries = [];
+    for (const id of ids) {
+      const entry = await this.deepSyncPost(id);
+      if (entry) entries.push(entry);
+    }
+    const remaining = this.store.countPostsMissingExtendedMetadata();
+    log.info('Metadata backfill sweep complete', { processed: entries.length, remaining });
     return { processed: entries.length, remaining, entries };
   }
 }
