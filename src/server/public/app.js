@@ -16,8 +16,10 @@ const token = new URLSearchParams(location.search).get('token') || '';
 async function refreshAll() {
   const [status, posts, jobs] = await Promise.all([api('/status'), api('/posts'), api('/jobs')]);
   renderStatus(status, state);
-  state.posts = posts; renderPosts(state);
-  state.jobs = jobs; renderJobs(state);
+  state.posts = posts;
+  state.jobs = jobs;
+  renderPosts(state);
+  renderJobs(state);
 }
 
 // ── live log via WebSocket ──
@@ -98,6 +100,12 @@ document.body.addEventListener('click', async (e) => {
     const post = state.posts.find((p) => String(p.id) === t.dataset.post);
     const opt = post?.options?.[+t.dataset.idx];
     if (opt) { await api('/jobs', { method: 'POST', body: JSON.stringify({ url: opt.url, provider: opt.provider, quality: opt.quality, title: post.title, postLink: post.link }) }); refreshAll(); }
+  }
+  if (t.classList.contains('btn-open-selected-gd')) {
+    const select = t.previousElementSibling;
+    if (select && select.value) {
+      window.open(select.value, '_blank');
+    }
   }
 });
 

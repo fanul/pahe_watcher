@@ -743,6 +743,17 @@ legend {
   color: #ef4444;
 }
 
+.success-btn {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #34d399;
+}
+.success-btn:hover {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: #10b981;
+  color: #10b981;
+}
+
 /* Floating Log Widget */
 .log-widget {
   position: fixed;

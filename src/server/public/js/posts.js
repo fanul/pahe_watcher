@@ -106,8 +106,39 @@ export function renderPosts(state) {
           <div class="chips">
             ${rows || '<span class="muted">No matching links</span>'}
           </div>
-          <div class="actions">
+          <div class="actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <button class="btn small" data-resolve-post="${p.id}">Resolve preferred</button>
+            ${(() => {
+              const resolvedJobs = (state.jobs || []).filter(j => 
+                j.postLink === p.link && 
+                j.status === 'done' && 
+                j.result && 
+                j.result.finalUrl
+              );
+              
+              if (resolvedJobs.length === 1) {
+                const job = resolvedJobs[0];
+                return `
+                  <a href="${esc(job.result.finalUrl)}" target="_blank" rel="noopener" class="btn small success-btn" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; height: 28px;">
+                    📂 Open (${job.quality})
+                  </a>
+                `;
+              } else if (resolvedJobs.length > 1) {
+                const optionsHtml = resolvedJobs.map(j => {
+                  return `<option value="${esc(j.result.finalUrl)}">${j.quality} (${j.provider})</option>`;
+                }).join('');
+
+                return `
+                  <div style="display: flex; gap: 6px; align-items: center;">
+                    <select class="filter-select select-gd-link" style="width: auto; padding: 4px 8px; font-size: 11px; background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.4); color: #34d399; font-weight: 600; height: 28px; cursor: pointer; border-radius: 6px; outline: none;">
+                      ${optionsHtml}
+                    </select>
+                    <button class="btn small success-btn btn-open-selected-gd" style="height: 28px; padding: 0 10px; display: inline-flex; align-items: center; white-space: nowrap;">Open ↗</button>
+                  </div>
+                `;
+              }
+              return '';
+            })()}
           </div>
         </div>
       </div>
