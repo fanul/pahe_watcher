@@ -19,13 +19,23 @@ const log = createLogger('resolver:gdflix');
 // user's real GDFlix session) against an untrusted page.
 const GDFLIX_HOST_RE = /(^|\.)gdflix\.[a-z]{2,}$/i;
 
-const LINK_BUTTON_SELECTORS = [
+const PRIMARY_LINK_SELECTORS = [
   'a:has-text("G-Drive Link")',
   'button:has-text("G-Drive Link")',
   'a:has(b:has-text("G-Drive Link"))',
   'b:has-text("G-Drive Link")',
   'button#ddl',
   '#ddl',
+];
+
+const FALLBACK_LINK_SELECTORS = [
+  'button#drc',
+  '#drc',
+  'button:has-text("Download File")',
+  'button:has-text("Download")',
+  'button:has-text("Direct Download")',
+  'a:has-text("Download File")',
+  'a:has-text("Direct Download")',
   'a:has-text("Cloud Download")',
   'a:has-text("Google Drive")',
   'a:has-text("GDToT")',
@@ -33,10 +43,21 @@ const LINK_BUTTON_SELECTORS = [
   'a:has-text("Instant DL")',
   'a:has-text("PixelDrain")',
   'a:has-text("Download")',
+  'a:has-text("Fast Cloud")',
+  'a:has-text("ZipDisk")',
 ];
 
 // A resolved final link looks like one of these hosts.
 const FINAL_HOST_RE = /(drive\.google\.com|googleusercontent\.com|usercontent\.google|pixeldrain\.|workers\.dev|\.r2\.|pixeldra\.in)/i;
+
+// Google Drive specifically, excluding the other mirror/proxy hosts above
+// (pixeldrain, workers.dev, .r2.dev). Used to keep the "G-Drive Link" button's
+// wait strict to an actual Drive URL — see the PRIMARY_LINK_SELECTORS click
+// in resolveGdflix for why: without this, if any other open tab (an ad
+// popup, a different mirror link shown on the same page, etc.) happens to
+// carry a workers.dev/.r2.dev URL while we're waiting for the real Drive
+// link to render, the broad FINAL_HOST_RE would accept that instead.
+const GOOGLE_DRIVE_HOST_RE_SOURCE = 'drive\\.google\\.com|googleusercontent\\.com|usercontent\\.google';
 
 export function isGdflixUrl(url) {
   try {
@@ -224,44 +245,60 @@ export async function resolveGdflix(page, { credentials, captcha } = {}, ctx = {
   let loginResult = { loggedIn: false, skipped: true };
   if (credentials) loginResult = await ensureGdflixLogin(page, credentials, ctx);
 
-  // Solve any captcha guarding the file page.
-  if (captcha) {
-    const res = await captcha.solve(page, ctx).catch(() => ({ solved: true }));
-    if (res && res.solved === false) {
-      throw new Error(`Captcha not solved on GDFlix (${res.reason || 'unknown'})`);
-    }
+
+
+  // 1) Look for an already-present Google Drive link in the DOM first.
+  const googleDriveLink = await scanPageForFinalLink(page, GOOGLE_DRIVE_HOST_RE_SOURCE);
+  if (googleDriveLink) {
+    ctx.log?.(`[GDFlix] Found Google Drive link already in DOM: ${googleDriveLink}`);
+    return { finalUrl: googleDriveLink, linkType: 'google-drive' };
   }
 
-  // 1) Look for an already-present final link in the DOM.
-  const direct = await scanPageForFinalLink(page, FINAL_HOST_RE.source);
-  if (direct) {
-    return { finalUrl: direct, linkType: classifyFinalLink(direct) };
+  // 2) The G-Drive Link button is the top preference. Try to click it if it exists
+  // to generate the Google Drive link. The wait afterward is kept strict to an
+  // actual Drive URL (not the broader FINAL_HOST_RE) — otherwise an unrelated
+  // tab (ad popup, a different mirror link on the same page) carrying a
+  // workers.dev/.r2.dev URL could get grabbed instead of the real Drive link
+  // this specific button is supposed to produce.
+  const primarySelector = PRIMARY_LINK_SELECTORS.join(', ');
+  ctx.log?.('[GDFlix] Checking for G-Drive Link button...');
+  const primaryBtn = await page.$(primarySelector).catch(() => null);
+
+  if (primaryBtn) {
+    const desc = await elementFingerprint(primaryBtn);
+    ctx.log?.(`[GDFlix] Found G-Drive Link button: ${desc}. Clicking to generate Google Drive link...`);
+    const found = await clickAndAwaitLink(page, primaryBtn, desc, ctx, GOOGLE_DRIVE_HOST_RE_SOURCE);
+    if (found) return found;
   }
 
-  // 2) The download button often only renders a short moment after login
-  // completes (e.g. once an AJAX call resolves). A single instant page.$()
-  // check misses that — wait for any known control to actually appear first.
-  const combinedSelector = LINK_BUTTON_SELECTORS.join(', ');
-  ctx.log?.('[GDFlix] Waiting for a download-link button to appear...');
-  const firstBtn = await page
-    .waitForSelector(combinedSelector, { timeout: 10000, state: 'visible' })
+  // 3) If no Google Drive link was found or generated, look for any other fallback links (like R2, pixeldrain) in DOM
+  const directFallback = await scanPageForFinalLink(page, FINAL_HOST_RE.source);
+  if (directFallback) {
+    ctx.log?.(`[GDFlix] Found fallback link in DOM: ${directFallback}`);
+    return { finalUrl: directFallback, linkType: classifyFinalLink(directFallback) };
+  }
+
+  // 4) If still nothing, wait for any fallback/mirror button (e.g. Instant DL, Fast Cloud) to appear and click it
+  ctx.log?.('[GDFlix] No G-Drive link/button or DOM fallback found. Waiting for fallback buttons...');
+  const fallbackSelector = FALLBACK_LINK_SELECTORS.join(', ');
+  const fallbackBtn = await page
+    .waitForSelector(fallbackSelector, { timeout: 8000, state: 'visible' })
     .catch(() => null);
 
   let triedFingerprint = null;
-  if (firstBtn) {
-    const desc = await elementFingerprint(firstBtn);
+  if (fallbackBtn) {
+    const desc = await elementFingerprint(fallbackBtn);
     triedFingerprint = desc;
-    ctx.log?.(`[GDFlix] Found button: ${desc}`);
-    const found = await clickAndAwaitLink(page, firstBtn, desc, ctx);
+    ctx.log?.(`[GDFlix] Found fallback button: ${desc}. Clicking...`);
+    const found = await clickAndAwaitLink(page, fallbackBtn, desc, ctx);
     if (found) return found;
   } else {
-    ctx.log?.('[GDFlix] No known download-link button appeared within 10s.');
+    ctx.log?.('[GDFlix] No download or mirror button appeared.');
   }
 
-  // 3) Fallback sweep: some pages expose more than one matching control
-  // (e.g. distinct quality/host buttons) — try the rest by preference order,
-  // skipping whichever element firstBtn already was (avoid a wasted re-click).
-  for (const sel of LINK_BUTTON_SELECTORS) {
+  // 5) Fallback sweep: try all selectors in order of preference if the initial steps failed
+  const allSelectors = [...PRIMARY_LINK_SELECTORS, ...FALLBACK_LINK_SELECTORS];
+  for (const sel of allSelectors) {
     const btn = await page.$(sel).catch(() => null);
     if (!btn) continue;
     const fingerprint = await elementFingerprint(btn);
@@ -350,9 +387,18 @@ async function scanPageForFinalLink(target, reSource) {
     .catch(() => null);
 }
 
-/** Click a button/link, then poll every open tab for up to 15s for a resulting final link. */
-async function clickAndAwaitLink(page, btn, label, ctx) {
+/**
+ * Click a button/link, then poll every open tab for up to 15s for a resulting
+ * final link. `hostReSource` restricts what counts as "found" — pass the
+ * Google-Drive-only regex when the click was specifically the G-Drive Link
+ * button, so an unrelated tab carrying some other final-host URL (ad popup,
+ * a different mirror shown on the same page) can't get grabbed instead of
+ * the actual Drive link this click is supposed to produce. Defaults to the
+ * broad FINAL_HOST_RE for fallback-button clicks, where any mirror is fine.
+ */
+async function clickAndAwaitLink(page, btn, label, ctx, hostReSource = FINAL_HOST_RE.source) {
   await btn.click().catch(() => {});
+  const hostRe = new RegExp(hostReSource, 'i');
 
   ctx.log?.(`[GDFlix] Clicked ${label} — waiting up to 15 seconds for Google Drive or final link to generate...`);
   const maxPollTimeMs = 15000;
@@ -364,14 +410,14 @@ async function clickAndAwaitLink(page, btn, label, ctx) {
     const pages = page.context().pages();
     for (const p of pages) {
       const u = p.url();
-      if (FINAL_HOST_RE.test(u)) {
+      if (hostRe.test(u)) {
         ctx.log?.(`[GDFlix] Found final URL in browser address bar: ${u}`);
         const linkType = classifyFinalLink(u);
         if (p !== page) await p.close().catch(() => {});
         return { finalUrl: u, linkType };
       }
 
-      const found = await scanPageForFinalLink(p, FINAL_HOST_RE.source);
+      const found = await scanPageForFinalLink(p, hostReSource);
       if (found) {
         ctx.log?.(`[GDFlix] Successfully captured generated link: ${found}`);
         if (p !== page) await p.close().catch(() => {});
