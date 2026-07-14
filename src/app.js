@@ -61,11 +61,22 @@ export async function createApp() {
       postLink: job.postLink,
       sourceUrl: job.url,
     };
+    // Save the resolved result on the job in the database first, so that even if subsequent steps (like sheets) fail,
+    // the resolved link is already captured and visible in the GUI!
+    const currentJob = store.getJob(job.id);
+    if (currentJob) {
+      currentJob.result = row;
+      store.upsertJob(currentJob);
+    }
+
     if (sheets.enabled) {
-      await sheets.appendResolved(row).catch((err) => {
+      try {
+        await sheets.appendResolved(row);
+      } catch (err) {
         ctx.log?.(`Sheet append failed: ${err.message}`);
         log.error('Sheet append failed', { error: String(err) });
-      });
+        throw err;
+      }
     } else {
       ctx.log?.('Sheets not configured — resolved link stored in job result only.');
     }
