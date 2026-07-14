@@ -8,6 +8,7 @@ import { initCrawl, updateCrawlProgress } from './js/crawl.js';
 import { initSettings } from './js/settings.js';
 import { initCaptcha, showCaptcha } from './js/captcha.js';
 import { initManualJob } from './js/manual.js';
+import { SearchableSelect } from './js/searchableSelect.js';
 
 // ws authentication token
 const token = new URLSearchParams(location.search).get('token') || '';
@@ -146,6 +147,8 @@ document.body.addEventListener('click', async (e) => {
   if (t.dataset.resolvePost) { await api(`/posts/${t.dataset.resolvePost}/resolve`, { method: 'POST', body: '{}' }); }
   if (t.dataset.retry) { await api(`/jobs/${t.dataset.retry}/retry`, { method: 'POST' }); }
   if (t.dataset.cancel) { await api(`/jobs/${t.dataset.cancel}/cancel`, { method: 'POST' }); }
+  if (t.dataset.pauseJob) { await api(`/jobs/${t.dataset.pauseJob}/pause`, { method: 'POST' }); }
+  if (t.dataset.resumeJob) { await api(`/jobs/${t.dataset.resumeJob}/resume`, { method: 'POST' }); }
   if (t.dataset.deleteJob) { await api(`/jobs/${t.dataset.deleteJob}`, { method: 'DELETE' }); }
   if (t.dataset.post != null && t.dataset.idx != null) {
     const post = state.posts.find((p) => String(p.id) === t.dataset.post);
@@ -196,13 +199,35 @@ $('#btnClearAllJobs').onclick = async () => {
   }
 };
 
+// Keep references to searchable selects so we can access them if needed
+window.searchableSelects = [];
+function initSearchableSelects() {
+  const selectors = [
+    '#filterType',
+    '#filterProvider',
+    '#filterResolution',
+    '#filterCodec',
+    '#filterGenre',
+    '#filterYear',
+    '#filterDuration',
+    '#filterRating',
+    '#filterSort'
+  ];
+  selectors.forEach(sel => {
+    const el = $(sel);
+    if (el) {
+      window.searchableSelects.push(new SearchableSelect(el));
+    }
+  });
+}
+
 // ── filters (server-side now — debounce so typing doesn't hammer the API) ──
 let filterDebounce = null;
 function refilterPostsSoon(delay = 300) {
   clearTimeout(filterDebounce);
   filterDebounce = setTimeout(() => loadPosts(state, { reset: true }), delay);
 }
-['#filterType', '#filterProvider', '#filterResolution', '#filterCodec', '#filterGenre', '#filterYear', '#filterDuration', '#filterSort'].forEach((sel) => {
+['#filterType', '#filterProvider', '#filterResolution', '#filterCodec', '#filterGenre', '#filterYear', '#filterDuration', '#filterRating', '#filterSort'].forEach((sel) => {
   $(sel)?.addEventListener('change', () => refilterPostsSoon(0));
 });
 $('#filterSearch')?.addEventListener('input', () => refilterPostsSoon(300));
@@ -231,9 +256,13 @@ initCrawl(refreshAll);
 initSettings(refreshAll);
 initCaptcha();
 initManualJob(refreshAll);
-initPostFacets();
 
-refreshAll().catch((e) => appendLog({ ts: '', level: 'error', scope: 'ui', msg: String(e) }));
+(async () => {
+  await initPostFacets();
+  initSearchableSelects();
+  await refreshAll();
+})().catch((e) => appendLog({ ts: '', level: 'error', scope: 'ui', msg: String(e) }));
+
 connectWs();
 // Periodic refresh is now status-only (cheap) — posts/jobs stay in sync via
 // WebSocket pushes instead of a full-list refetch every 15s.

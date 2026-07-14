@@ -46,10 +46,22 @@ export class BypassEngine {
       config: config,
     });
     this.captcha = createCaptchaSolver(config, { headless });
+    this.activeJobs = new Map();
   }
 
   async close() {
     await this.browser.close();
+  }
+
+  async abort(jobId) {
+    const active = this.activeJobs.get(jobId);
+    if (active) {
+      log.info(`Aborting active job ${jobId}`);
+      try {
+        await active.page.close().catch(() => {});
+      } catch (e) {}
+      this.activeJobs.delete(jobId);
+    }
   }
 
   /**
@@ -62,6 +74,7 @@ export class BypassEngine {
     const timeoutMs = this.config.bypass.timeoutSeconds * 1000;
     const page = await this.browser.newPage();
     const context = page.context();
+    this.activeJobs.set(job.id, { page, context });
     
     // Clear cookies for shorteners to prevent Nginx "400 Bad Request (Cookie Too Large)"
     try {
@@ -131,13 +144,14 @@ export class BypassEngine {
       ctx.log?.(`✔ Final link (${settled.linkType}): ${settled.finalUrl}`);
       return { ...settled, hops };
     } finally {
+      this.activeJobs.delete(job.id);
       // Clean up context listeners and close all pages
       context.off('page', onPage);
       for (const p of activePages) {
         const listener = navListeners.get(p);
         if (listener) p.off('framenavigated', listener);
+        await p.close().catch(() => {});
       }
-      await this.browser.close().catch(() => {});
     }
   }
 

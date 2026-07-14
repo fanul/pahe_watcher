@@ -14,9 +14,16 @@ function currentFilters() {
     provider: $('#filterProvider')?.value || 'all',
     quality: $('#filterResolution')?.value || 'all',
     codec: $('#filterCodec')?.value || 'all',
-    genre: $('#filterGenre')?.value || 'all',
+    genre: (() => {
+      const el = $('#filterGenre');
+      if (!el) return 'all';
+      const selected = Array.from(el.selectedOptions).map(o => o.value);
+      if (selected.length === 0 || selected.includes('all')) return 'all';
+      return selected.join(',');
+    })(),
     year: $('#filterYear')?.value || 'all',
     duration: $('#filterDuration')?.value || 'all',
+    rating: $('#filterRating')?.value || 'all',
     sort: $('#filterSort')?.value || 'date_desc',
   };
 }
@@ -44,6 +51,15 @@ export async function initPostFacets() {
       opt.textContent = String(y);
       yearSelect.appendChild(opt);
     }
+  }
+
+  // Refresh searchable selects if initialized
+  if (window.searchableSelects) {
+    window.searchableSelects.forEach(ss => {
+      if (ss.selectEl === genreSelect || ss.selectEl === yearSelect) {
+        ss.refresh();
+      }
+    });
   }
 }
 

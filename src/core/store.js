@@ -237,9 +237,9 @@ export class Store {
    */
   queryPosts({
     limit = 24, offset = 0, search = '', type = 'all', provider = 'all', quality = 'all', codec = 'all',
-    genre = 'all', year = 'all', duration = 'all', sort = 'date_desc',
+    genre = 'all', year = 'all', duration = 'all', rating = 'all', sort = 'date_desc',
   } = {}) {
-    const { joinSql, whereSql, params } = this._buildPostsFilter({ search, type, provider, quality, codec, genre, year, duration });
+    const { joinSql, whereSql, params } = this._buildPostsFilter({ search, type, provider, quality, codec, genre, year, duration, rating });
     const orderSql = SORT_CLAUSES[sort] || SORT_CLAUSES.date_desc;
 
     const total = this.db.prepare(`SELECT COUNT(*) AS n FROM posts ${joinSql} ${whereSql}`).get(...params).n;
@@ -270,7 +270,7 @@ export class Store {
     return { items, total };
   }
 
-  _buildPostsFilter({ search, type, provider, quality, codec, genre = 'all', year = 'all', duration = 'all' }) {
+  _buildPostsFilter({ search, type, provider, quality, codec, genre = 'all', year = 'all', duration = 'all', rating = 'all' }) {
     const joins = [];
     const where = [];
     const params = [];
@@ -287,8 +287,16 @@ export class Store {
     else if (type === 'series') where.push('posts.is_series = 1');
 
     if (genre && genre !== 'all') {
-      where.push('posts.genre LIKE ?');
-      params.push(`%${genre}%`);
+      const parts = genre.split(',').map(g => g.trim()).filter(Boolean);
+      for (const part of parts) {
+        where.push('posts.genre LIKE ?');
+        params.push(`%${part}%`);
+      }
+    }
+
+    if (rating && rating !== 'all') {
+      where.push('posts.rating IS NOT NULL AND CAST(posts.rating AS REAL) >= ?');
+      params.push(Number(rating));
     }
 
     if (year && year !== 'all') {

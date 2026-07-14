@@ -5,6 +5,7 @@ import { Watcher } from './watcher/watcher.js';
 import { JobQueue } from './queue/jobQueue.js';
 import { SheetsClient } from './sheets/sheetsClient.js';
 import { BypassEngine } from './bypass/index.js';
+import { bus } from './core/eventBus.js';
 import {
   getPublicConfig,
   updateConfig,
@@ -107,6 +108,21 @@ export async function createApp() {
       store.close();
     },
   };
+
+  bus.on('job:deleted', (jobId) => {
+    bypass.abort(jobId).catch(() => {});
+  });
+  bus.on('job:cancelled', (jobId) => {
+    bypass.abort(jobId).catch(() => {});
+  });
+  bus.on('queue:idle', () => {
+    bypass.close().catch(() => {});
+  });
+  bus.on('queue:paused', (paused) => {
+    if (paused) {
+      bypass.close().catch(() => {});
+    }
+  });
 
   queue.hydrate();
   return app;

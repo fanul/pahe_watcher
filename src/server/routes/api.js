@@ -47,6 +47,7 @@ export function createApiRouter(app) {
       genre: req.query.genre || 'all',
       year: req.query.year || 'all',
       duration: req.query.duration || 'all',
+      rating: req.query.rating || 'all',
       sort: req.query.sort || 'date_desc',
     }));
   });
@@ -183,6 +184,12 @@ export function createApiRouter(app) {
   });
   router.post('/jobs/:id/cancel', (req, res) => {
     res.json({ ok: queue.cancel(req.params.id) });
+  });
+  router.post('/jobs/:id/pause', (req, res) => {
+    res.json({ ok: queue.pause(req.params.id) });
+  });
+  router.post('/jobs/:id/resume', (req, res) => {
+    res.json({ ok: queue.resume(req.params.id) });
   });
   router.delete('/jobs/:id', (req, res) => {
     res.json({ ok: queue.delete(req.params.id) });

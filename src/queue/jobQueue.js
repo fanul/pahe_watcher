@@ -17,6 +17,7 @@ export const JobStatus = {
   FAILED: 'failed',
   CANCELLED: 'cancelled',
   DEAD: 'dead', // confirmed-dead link (file removed/expired) — never auto-retried
+  PAUSED: 'paused',
 };
 
 /**
@@ -77,6 +78,7 @@ export class JobQueue {
   setPaused(paused) {
     this.paused = paused;
     log.info(`Queue ${paused ? 'paused' : 'resumed'}`);
+    bus.emit('queue:paused', paused);
     if (!paused) this._drain();
   }
 
@@ -86,9 +88,37 @@ export class JobQueue {
     if (job.status === JobStatus.QUEUED) {
       this.pending = this.pending.filter((id) => id !== jobId);
       this._update(job, { status: JobStatus.CANCELLED });
+      bus.emit('job:cancelled', jobId);
+      return true;
+    } else if (job.status === JobStatus.RUNNING || job.status === JobStatus.NEEDS_CAPTCHA) {
+      this._update(job, { status: JobStatus.CANCELLED });
+      bus.emit('job:cancelled', jobId);
       return true;
     }
-    return false; // running jobs can't be cancelled synchronously (kept simple)
+    return false;
+  }
+
+  pause(jobId) {
+    const job = this.store.getJob(jobId);
+    if (!job) return false;
+    if (job.status === JobStatus.QUEUED) {
+      this.pending = this.pending.filter((id) => id !== jobId);
+      this._update(job, { status: JobStatus.PAUSED });
+      return true;
+    }
+    return false;
+  }
+
+  resume(jobId) {
+    const job = this.store.getJob(jobId);
+    if (!job) return false;
+    if (job.status === JobStatus.PAUSED) {
+      this._update(job, { status: JobStatus.QUEUED });
+      this.pending.push(job.id);
+      this._drain();
+      return true;
+    }
+    return false;
   }
 
   /** Retry a failed/cancelled/dead job. Dead is included so a misclassified job can be manually overridden — bulk retryAll() deliberately excludes it. */
@@ -141,10 +171,19 @@ export class JobQueue {
 
     try {
       const result = await this.processor(this.store.getJob(job.id), ctx);
+      const fresh = this.store.getJob(job.id);
+      if (fresh && fresh.status === JobStatus.CANCELLED) {
+        log.info(`Job ${job.id.slice(0, 8)} was cancelled during execution`);
+        return;
+      }
       this._update(this.store.getJob(job.id), { status: JobStatus.DONE, result, error: null });
       log.info(`Job ${job.id.slice(0, 8)} done`);
     } catch (err) {
       const fresh = this.store.getJob(job.id);
+      if (!fresh || fresh.status === JobStatus.CANCELLED) {
+        log.info(`Job ${job.id.slice(0, 8)} was cancelled, skipping failure handling`);
+        return;
+      }
       const canRetry = !err?.dead && (fresh.attempts || 1) <= this.maxRetries;
       if (err?.dead) {
         log.error(`Job ${job.id.slice(0, 8)} confirmed dead, not retrying`, { error: String(err) });
@@ -162,6 +201,9 @@ export class JobQueue {
     } finally {
       this.active.delete(job.id);
       this._drain();
+      if (this.active.size === 0 && this.pending.length === 0) {
+        bus.emit('queue:idle');
+      }
     }
   }
 
