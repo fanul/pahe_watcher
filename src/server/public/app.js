@@ -2,8 +2,8 @@
 import { $, api, state, esc } from './js/state.js';
 import { upsert } from './js/utils.js';
 import { renderStatus } from './js/status.js';
-import { renderPosts } from './js/posts.js';
-import { renderJobs } from './js/jobs.js';
+import { loadPosts, renderPosts, notePostInserted } from './js/posts.js';
+import { loadJobs, renderJobs, noteJobInserted, noteJobsRemoved, resetJobsCleared } from './js/jobs.js';
 import { initCrawl, updateCrawlProgress } from './js/crawl.js';
 import { initSettings } from './js/settings.js';
 import { initCaptcha, showCaptcha } from './js/captcha.js';
@@ -13,13 +13,23 @@ import { initManualJob } from './js/manual.js';
 const token = new URLSearchParams(location.search).get('token') || '';
 
 // ── data loading ──
+// Full resync: status + first page of posts/jobs. Reserved for infrequent,
+// deliberate actions (boot, settings saved, manual job added, bulk queue
+// actions) — NOT the periodic timer or frequent per-item clicks, which rely
+// on WebSocket push updates instead so a large synced catalog never forces a
+// full-list refetch just to reflect one small change.
 async function refreshAll() {
-  const [status, posts, jobs] = await Promise.all([api('/status'), api('/posts'), api('/jobs')]);
+  const [status] = await Promise.all([
+    api('/status'),
+    loadPosts(state, { reset: true }),
+    loadJobs(state, { reset: true }),
+  ]);
   renderStatus(status, state);
-  state.posts = posts;
-  state.jobs = jobs;
-  renderPosts(state);
-  renderJobs(state);
+}
+
+async function refreshStatusOnly() {
+  const status = await api('/status');
+  renderStatus(status, state);
 }
 
 // ── live log via WebSocket ──
@@ -37,11 +47,21 @@ let logBuffer = [];
 function handleEvent(type, payload) {
   switch (type) {
     case 'log': appendLog(payload); break;
-    case 'post:new':
-      upsert(state.posts, payload, (p) => p.id); renderPosts(state); refreshStatusSoon(); break;
+    case 'post:new': {
+      const inserted = upsert(state.posts, payload, (p) => p.id);
+      if (inserted) notePostInserted();
+      renderPosts(state);
+      refreshStatusSoon();
+      break;
+    }
     case 'job:created':
-    case 'job:updated':
-      upsert(state.jobs, payload, (j) => j.id); renderJobs(state); refreshStatusSoon(); break;
+    case 'job:updated': {
+      const inserted = upsert(state.jobs, payload, (j) => j.id);
+      if (inserted) noteJobInserted();
+      renderJobs(state);
+      refreshStatusSoon();
+      break;
+    }
     case 'job:log': {
       const j = state.jobs.find((x) => x.id === payload.jobId);
       if (j) { j.logs = [...(j.logs || []), payload].slice(-200); renderJobs(state); }
@@ -53,12 +73,12 @@ function handleEvent(type, payload) {
     case 'crawl:progress': updateCrawlProgress(payload); break;
     case 'job:deleted':
       state.jobs = state.jobs.filter((j) => j.id !== payload);
+      noteJobsRemoved(1);
       renderJobs(state);
       refreshStatusSoon();
       break;
     case 'jobs:cleared':
-      state.jobs = [];
-      renderJobs(state);
+      resetJobsCleared(state);
       refreshStatusSoon();
       break;
   }
@@ -84,22 +104,26 @@ function refreshStatusSoon() {
 }
 
 // ── controls ──
+// These are infrequent, deliberate actions — a full resync is fine and safest.
 $('#btnPoll').onclick = () => api('/watcher/poll', { method: 'POST' }).then(refreshAll);
 $('#btnWatcher').onclick = () =>
-  api('/watcher/pause', { method: 'POST', body: JSON.stringify({ paused: !state.status.watcher.paused }) }).then(refreshAll);
+  api('/watcher/pause', { method: 'POST', body: JSON.stringify({ paused: !state.status.watcher.paused }) }).then(refreshStatusOnly);
 $('#btnQueue').onclick = () =>
-  api('/queue/pause', { method: 'POST', body: JSON.stringify({ paused: !state.status.queue.paused }) }).then(refreshAll);
+  api('/queue/pause', { method: 'POST', body: JSON.stringify({ paused: !state.status.queue.paused }) }).then(refreshStatusOnly);
 
 document.body.addEventListener('click', async (e) => {
   const t = e.target;
-  if (t.dataset.resolvePost) { await api(`/posts/${t.dataset.resolvePost}/resolve`, { method: 'POST', body: '{}' }); refreshAll(); }
-  if (t.dataset.retry) { await api(`/jobs/${t.dataset.retry}/retry`, { method: 'POST' }); refreshAll(); }
-  if (t.dataset.cancel) { await api(`/jobs/${t.dataset.cancel}/cancel`, { method: 'POST' }); refreshAll(); }
-  if (t.dataset.deleteJob) { await api(`/jobs/${t.dataset.deleteJob}`, { method: 'DELETE' }); refreshAll(); }
+  // Frequent per-item actions: fire the request and let the resulting
+  // job:created/job:updated/job:deleted WS event update the UI — no full
+  // list refetch per click.
+  if (t.dataset.resolvePost) { await api(`/posts/${t.dataset.resolvePost}/resolve`, { method: 'POST', body: '{}' }); }
+  if (t.dataset.retry) { await api(`/jobs/${t.dataset.retry}/retry`, { method: 'POST' }); }
+  if (t.dataset.cancel) { await api(`/jobs/${t.dataset.cancel}/cancel`, { method: 'POST' }); }
+  if (t.dataset.deleteJob) { await api(`/jobs/${t.dataset.deleteJob}`, { method: 'DELETE' }); }
   if (t.dataset.post != null && t.dataset.idx != null) {
     const post = state.posts.find((p) => String(p.id) === t.dataset.post);
     const opt = post?.options?.[+t.dataset.idx];
-    if (opt) { await api('/jobs', { method: 'POST', body: JSON.stringify({ url: opt.url, provider: opt.provider, quality: opt.quality, title: post.title, postLink: post.link }) }); refreshAll(); }
+    if (opt) { await api('/jobs', { method: 'POST', body: JSON.stringify({ url: opt.url, provider: opt.provider, quality: opt.quality, title: post.title, postLink: post.link }) }); }
   }
   if (t.classList.contains('btn-open-selected-gd')) {
     const select = t.previousElementSibling;
@@ -107,6 +131,8 @@ document.body.addEventListener('click', async (e) => {
       window.open(select.value, '_blank');
     }
   }
+  if (t.id === 'btnLoadMorePosts') { loadPosts(state, { reset: false }); }
+  if (t.id === 'btnLoadMoreJobs') { loadJobs(state, { reset: false }); }
 });
 
 // ── tabs navigation ──
@@ -133,21 +159,26 @@ tabCrawl.onclick = () => {
 $('#btnRetryAllJobs').onclick = async () => {
   if (confirm('Are you sure you want to retry all failed/cancelled jobs?')) {
     await api('/queue/retry', { method: 'POST' });
-    refreshAll();
+    loadJobs(state, { reset: true });
   }
 };
 $('#btnClearAllJobs').onclick = async () => {
   if (confirm('Are you sure you want to delete all jobs from the queue?')) {
     await api('/queue/clear', { method: 'POST' });
-    refreshAll();
+    loadJobs(state, { reset: true });
   }
 };
 
-// ── filters change listeners ──
+// ── filters (server-side now — debounce so typing doesn't hammer the API) ──
+let filterDebounce = null;
+function refilterPostsSoon(delay = 300) {
+  clearTimeout(filterDebounce);
+  filterDebounce = setTimeout(() => loadPosts(state, { reset: true }), delay);
+}
 ['#filterType', '#filterProvider', '#filterResolution', '#filterCodec'].forEach((sel) => {
-  $(sel)?.addEventListener('change', () => renderPosts(state));
+  $(sel)?.addEventListener('change', () => refilterPostsSoon(0));
 });
-$('#filterSearch')?.addEventListener('input', () => renderPosts(state));
+$('#filterSearch')?.addEventListener('input', () => refilterPostsSoon(300));
 
 // ── log widget toggle ──
 const logWidget = $('#logWidget');
@@ -176,4 +207,6 @@ initManualJob(refreshAll);
 
 refreshAll().catch((e) => appendLog({ ts: '', level: 'error', scope: 'ui', msg: String(e) }));
 connectWs();
-setInterval(() => refreshAll().catch(() => {}), 15000);
+// Periodic refresh is now status-only (cheap) — posts/jobs stay in sync via
+// WebSocket pushes instead of a full-list refetch every 15s.
+setInterval(() => refreshStatusOnly().catch(() => {}), 15000);

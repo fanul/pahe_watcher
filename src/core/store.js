@@ -182,6 +182,91 @@ export class Store {
     return rows.map((row) => this._hydratePost(row));
   }
 
+  /**
+   * Paginated + filtered posts for the GUI list, so the frontend never has to
+   * load the whole (potentially catalog-sized) table at once. Replicates the
+   * filter semantics the GUI previously applied client-side in JS:
+   *   - search: every whitespace-separated word must match title or synopsis
+   *     (implemented as an FTS5 MATCH — matches whole words, not arbitrary
+   *     substrings within a word, which is the one intentional behavior
+   *     difference from the old client-side substring search).
+   *   - type: 'movie' | 'series' | 'all'.
+   *   - provider/quality/codec: a post matches only if a SINGLE download
+   *     option satisfies all three together (not "has a GD option" AND
+   *     separately "has a 1080p option") — same as the old matchingOpts
+   *     filter.
+   *   - codec 'x264' means "not x265/hevc/10bit-flagged", matching the old
+   *     client's isX265-based exclusion, not a literal "x264" substring
+   *     requirement.
+   * Returns { items, total } — items shaped like listPosts()/getPost().
+   */
+  queryPosts({ limit = 24, offset = 0, search = '', type = 'all', provider = 'all', quality = 'all', codec = 'all' } = {}) {
+    const { joinSql, whereSql, params } = this._buildPostsFilter({ search, type, provider, quality, codec });
+
+    const total = this.db.prepare(`SELECT COUNT(*) AS n FROM posts ${joinSql} ${whereSql}`).get(...params).n;
+
+    const rows = this.db.prepare(`
+      SELECT posts.* FROM posts ${joinSql} ${whereSql}
+      ORDER BY posts.date DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+
+    const ids = rows.map((r) => r.id);
+    const optionsByPost = new Map();
+    if (ids.length) {
+      const placeholders = ids.map(() => '?').join(',');
+      const optRows = this.db
+        .prepare(`SELECT * FROM post_options WHERE post_id IN (${placeholders}) ORDER BY post_id, sort_order`)
+        .all(...ids);
+      for (const row of optRows) {
+        const list = optionsByPost.get(row.post_id) || [];
+        list.push(this._hydrateOption(row));
+        optionsByPost.set(row.post_id, list);
+      }
+    }
+
+    const items = rows.map((row) => this._hydratePost(row, optionsByPost.get(row.id) || []));
+    return { items, total };
+  }
+
+  _buildPostsFilter({ search, type, provider, quality, codec }) {
+    const joins = [];
+    const where = [];
+    const params = [];
+
+    if (search && search.trim()) {
+      const ftsQuery = search.trim().split(/\s+/).filter(Boolean)
+        .map((w) => `"${w.replace(/"/g, '""')}"`).join(' ');
+      joins.push('JOIN posts_fts ON posts_fts.rowid = posts.id');
+      where.push('posts_fts MATCH ?');
+      params.push(ftsQuery);
+    }
+
+    if (type === 'movie') where.push('posts.is_series = 0');
+    else if (type === 'series') where.push('posts.is_series = 1');
+
+    const hasLinkFilters = (provider && provider !== 'all') || (quality && quality !== 'all') || (codec && codec !== 'all');
+    if (hasLinkFilters) {
+      const optConds = ['po.post_id = posts.id'];
+      const optParams = [];
+      if (provider && provider !== 'all') { optConds.push('po.provider = ?'); optParams.push(provider); }
+      if (quality && quality !== 'all') { optConds.push('po.quality = ?'); optParams.push(quality); }
+      if (codec === 'x265') {
+        optConds.push("(po.quality_label LIKE '%x265%' OR po.quality_label LIKE '%hevc%' OR po.quality_label LIKE '%10bit%')");
+      } else if (codec === 'x264') {
+        optConds.push("NOT (po.quality_label LIKE '%x265%' OR po.quality_label LIKE '%hevc%' OR po.quality_label LIKE '%10bit%')");
+      }
+      where.push(`EXISTS (SELECT 1 FROM post_options po WHERE ${optConds.join(' AND ')})`);
+      params.push(...optParams);
+    }
+
+    return {
+      joinSql: joins.join(' '),
+      whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '',
+      params,
+    };
+  }
+
   /** Post ids whose content (options/metadata) hasn't been deep-synced yet. */
   listUnsyncedPostIds(limit = 20) {
     return this._stmt.unsyncedPostIds.all(limit).map((r) => r.id);
@@ -280,6 +365,13 @@ export class Store {
 
   countJobs() {
     return this._stmt.countJobs.get().n;
+  }
+
+  /** Paginated jobs for the GUI list. Returns { items, total }. */
+  queryJobs({ limit = 30, offset = 0 } = {}) {
+    const total = this.countJobs();
+    const rows = this.db.prepare('SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
+    return { items: rows.map((row) => this._hydrateJob(row)), total };
   }
 
   _hydrateJob(row) {

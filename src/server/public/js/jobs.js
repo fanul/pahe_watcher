@@ -1,7 +1,51 @@
-import { $, esc } from './state.js';
+import { $, api, esc } from './state.js';
+
+const LIMIT = 30;
+let offset = 0;
+let total = 0;
+let loading = false;
+
+/**
+ * Fetch a page of jobs (server-side paginated, newest first) and render.
+ * `reset: true` (default) replaces the loaded set; `reset: false` appends
+ * the next page — used by "Load more".
+ */
+export async function loadJobs(state, { reset = true } = {}) {
+  if (loading) return;
+  loading = true;
+  if (reset) offset = 0;
+
+  try {
+    const res = await api(`/jobs?limit=${LIMIT}&offset=${offset}`);
+    state.jobs = reset ? res.items : [...state.jobs, ...res.items];
+    total = res.total;
+    offset += res.items.length;
+    renderJobs(state);
+  } finally {
+    loading = false;
+  }
+}
+
+/** Call after a WS `job:created` inserts a genuinely new job, so the count/Load-more stay accurate without a re-fetch. */
+export function noteJobInserted() {
+  total += 1;
+}
+
+/** Call after a job is deleted, so the total stays accurate. */
+export function noteJobsRemoved(count = 1) {
+  total = Math.max(0, total - count);
+}
+
+/** Call after "Clear All" — every job is gone, so both the loaded set and the total reset to empty. */
+export function resetJobsCleared(state) {
+  state.jobs = [];
+  offset = 0;
+  total = 0;
+  renderJobs(state);
+}
 
 export function renderJobs(state) {
-  const jobs = state.jobs.slice(0, 60);
+  const jobs = state.jobs;
   $('#jobs').innerHTML = jobs.map((j) => {
     const logs = (j.logs || []).slice(-6).map((l) => `${l.msg}`).join('\n');
     const final = j.result?.finalUrl
@@ -12,10 +56,10 @@ export function renderJobs(state) {
     if (['done', 'failed', 'cancelled'].includes(j.status)) acts.push(`<button class="btn small danger-btn" data-delete-job="${j.id}">Delete</button>`);
     const isSheetError = j.status === 'failed' && j.result?.finalUrl;
     const isSuccess = j.status === 'done';
-    
+
     let cardClass = 'card';
     let statusText = j.status;
-    
+
     if (isSheetError) {
       cardClass = 'card sheet-error';
       statusText = 'Almost Finished';
@@ -41,4 +85,7 @@ export function renderJobs(state) {
       ${acts.length ? `<div class="actions">${acts.join('')}</div>` : ''}
     </div>`;
   }).join('') || '<div class="muted">No jobs yet.</div>';
+
+  const btnLoadMore = $('#btnLoadMoreJobs');
+  if (btnLoadMore) btnLoadMore.style.display = offset < total ? '' : 'none';
 }

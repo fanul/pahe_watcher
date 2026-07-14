@@ -173,3 +173,102 @@ test('countPosts / countJobs / listUnsyncedPostIds / countUnsyncedPosts', (t) =>
   store.upsertJob({ id: 'j1', status: 'done', createdAt: 'd', updatedAt: 'd' });
   assert.equal(store.countJobs(), 1);
 });
+
+function seedForQuery(store) {
+  store.markPost({
+    id: 1, title: 'Dragon Warriors', link: 'l1', date: '2026-01-05', isSeries: false, synopsis: 'Epic dragon battle',
+    options: [
+      { provider: 'GD', quality: '720p', qualityLabel: '720p x264', url: 'u1' },
+      { provider: 'GD', quality: '1080p', qualityLabel: '1080p x265 10Bit', url: 'u2' },
+    ],
+  });
+  store.markPost({
+    id: 2, title: 'Space Odyssey', link: 'l2', date: '2026-01-04', isSeries: false, synopsis: 'A journey to the stars',
+    options: [{ provider: '1F', quality: '720p', qualityLabel: '720p x264', url: 'u3' }],
+  });
+  store.markPost({
+    id: 3, title: 'Dragon Kingdom Season 1', link: 'l3', date: '2026-01-03', isSeries: true, synopsis: 'Dragons rule the kingdom',
+    options: [{ provider: 'GD', quality: '1080p', qualityLabel: '1080p x265', url: 'u4' }],
+  });
+  store.markPost({ id: 4, title: 'Random Comedy', link: 'l4', date: '2026-01-02', isSeries: false, synopsis: 'Funny stuff', options: [] });
+  store.markPost({
+    id: 5, title: 'Old Movie', link: 'l5', date: '2026-01-01', isSeries: false, synopsis: '',
+    options: [{ provider: 'GD', quality: '2160p', qualityLabel: '2160p x264', url: 'u5' }],
+  });
+}
+
+test('queryPosts: pagination returns bounded pages with an accurate total', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  const p1 = store.queryPosts({ limit: 2, offset: 0 });
+  assert.deepEqual(p1.items.map((p) => p.id), [1, 2]);
+  assert.equal(p1.total, 5);
+
+  const p2 = store.queryPosts({ limit: 2, offset: 2 });
+  assert.deepEqual(p2.items.map((p) => p.id), [3, 4]);
+  assert.equal(p2.total, 5);
+});
+
+test('queryPosts: search matches whole words across title and synopsis (FTS5)', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  const r = store.queryPosts({ search: 'dragon' });
+  assert.deepEqual(r.items.map((p) => p.id).sort(), [1, 3]);
+  assert.equal(r.total, 2);
+});
+
+test('queryPosts: type filter separates movies from series', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  const movies = store.queryPosts({ type: 'movie' });
+  assert.deepEqual(movies.items.map((p) => p.id).sort(), [1, 2, 4, 5]);
+
+  const series = store.queryPosts({ type: 'series' });
+  assert.deepEqual(series.items.map((p) => p.id), [3]);
+});
+
+test('queryPosts: provider/quality/codec must match within a single option, not independently', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  // provider=GD alone: posts 1, 3, 5 each have a GD option
+  assert.deepEqual(store.queryPosts({ provider: 'GD' }).items.map((p) => p.id).sort(), [1, 3, 5]);
+
+  // quality=1080p alone: posts 1, 3
+  assert.deepEqual(store.queryPosts({ quality: '1080p' }).items.map((p) => p.id).sort(), [1, 3]);
+
+  // codec=x265 ("x265|hevc|10bit"): posts 1 (10bit variant), 3
+  assert.deepEqual(store.queryPosts({ codec: 'x265' }).items.map((p) => p.id).sort(), [1, 3]);
+
+  // codec=x264 means "not x265-like" (matches the old client's isX265 exclusion, not a literal x264 substring)
+  assert.deepEqual(store.queryPosts({ codec: 'x264' }).items.map((p) => p.id).sort(), [1, 2, 5]);
+
+  // combined: provider=GD AND quality=1080p AND codec=x265 must be satisfied by ONE option
+  assert.deepEqual(store.queryPosts({ provider: 'GD', quality: '1080p', codec: 'x265' }).items.map((p) => p.id).sort(), [1, 3]);
+
+  // mismatch across options must NOT match: post 2 has 1F but only at 720p, never at 1080p
+  assert.deepEqual(store.queryPosts({ provider: '1F', quality: '1080p' }).items, []);
+});
+
+test('queryJobs: pagination returns bounded pages newest-first with an accurate total', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+
+  store.upsertJob({ id: 'j1', status: 'done', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' });
+  store.upsertJob({ id: 'j2', status: 'queued', createdAt: '2026-01-02T00:00:00Z', updatedAt: '2026-01-02T00:00:00Z' });
+  store.upsertJob({ id: 'j3', status: 'failed', createdAt: '2026-01-03T00:00:00Z', updatedAt: '2026-01-03T00:00:00Z' });
+
+  const page1 = store.queryJobs({ limit: 2, offset: 0 });
+  assert.deepEqual(page1.items.map((j) => j.id), ['j3', 'j2']);
+  assert.equal(page1.total, 3);
+
+  const page2 = store.queryJobs({ limit: 2, offset: 2 });
+  assert.deepEqual(page2.items.map((j) => j.id), ['j1']);
+});

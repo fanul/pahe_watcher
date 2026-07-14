@@ -31,8 +31,20 @@ export function createApiRouter(app) {
   });
 
   // ── posts ──
+  // Paginated + filtered, so the frontend never loads the whole (potentially
+  // catalog-sized) table at once. Returns { items, total }.
   router.get('/posts', (req, res) => {
-    res.json(store.listPosts());
+    const limit = Math.min(parseInt(req.query.limit, 10) || 24, 100);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    res.json(store.queryPosts({
+      limit,
+      offset,
+      search: req.query.search || '',
+      type: req.query.type || 'all',
+      provider: req.query.provider || 'all',
+      quality: req.query.quality || 'all',
+      codec: req.query.codec || 'all',
+    }));
   });
 
   router.get('/posts/search', (req, res) => {
@@ -128,8 +140,11 @@ export function createApiRouter(app) {
   });
 
   // ── jobs ──
+  // Paginated, same reasoning as /posts. Returns { items, total }.
   router.get('/jobs', (req, res) => {
-    res.json(queue.store.listJobs());
+    const limit = Math.min(parseInt(req.query.limit, 10) || 30, 100);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    res.json(store.queryJobs({ limit, offset }));
   });
   router.get('/jobs/:id', (req, res) => {
     const job = store.getJob(req.params.id);

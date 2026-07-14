@@ -1,48 +1,63 @@
-import { $, esc } from './state.js';
+import { $, api, esc } from './state.js';
+
+// Pagination state lives here (module-local), not on the shared `state`
+// object — mirrors how crawl.js already tracks its own accumulated list.
+const LIMIT = 24;
+let offset = 0;
+let total = 0;
+let loading = false;
+
+function currentFilters() {
+  return {
+    search: $('#filterSearch')?.value?.trim() || '',
+    type: $('#filterType')?.value || 'all',
+    provider: $('#filterProvider')?.value || 'all',
+    quality: $('#filterResolution')?.value || 'all',
+    codec: $('#filterCodec')?.value || 'all',
+  };
+}
+
+/**
+ * Fetch a page of posts (server-side filtered/paginated) and render.
+ * `reset: true` (default) replaces the loaded set — used on initial load and
+ * whenever a filter changes. `reset: false` appends the next page — used by
+ * "Load more".
+ */
+export async function loadPosts(state, { reset = true } = {}) {
+  if (loading) return;
+  loading = true;
+  if (reset) offset = 0;
+
+  const f = currentFilters();
+  const params = new URLSearchParams({ limit: LIMIT, offset: String(offset) });
+  for (const [k, v] of Object.entries(f)) if (v) params.set(k, v);
+
+  try {
+    const res = await api(`/posts?${params}`);
+    state.posts = reset ? res.items : [...state.posts, ...res.items];
+    total = res.total;
+    offset += res.items.length;
+    renderPosts(state);
+  } finally {
+    loading = false;
+  }
+}
+
+/** Call after a WS `post:new` inserts a genuinely new (not just updated) post, so the count/Load-more stay accurate without a re-fetch. */
+export function notePostInserted() {
+  total += 1;
+}
 
 export function renderPosts(state) {
-  const filterSearch = $('#filterSearch')?.value?.trim()?.toLowerCase() || '';
-  const filterType = $('#filterType')?.value || 'all';
   const filterProvider = $('#filterProvider')?.value || 'all';
   const filterResolution = $('#filterResolution')?.value || 'all';
   const filterCodec = $('#filterCodec')?.value || 'all';
 
-  const filteredPosts = state.posts.filter((p) => {
-    // 0. Flexible Title & Synopsis Search
-    if (filterSearch) {
-      const words = filterSearch.split(/\s+/).filter(Boolean);
-      const titleLower = p.title.toLowerCase();
-      const synopsisLower = (p.synopsis || '').toLowerCase();
-      const isMatched = words.every(word => titleLower.includes(word) || synopsisLower.includes(word));
-      if (!isMatched) return false;
-    }
+  $('#postCount').textContent = `(${total})`;
 
-    // 1. Box Office vs TV Series filter
-    const isSeries = p.isSeries ?? /season|episode|web-dl\s+\[ep|s\d+e\d+|\bs\d+\b/i.test(p.title);
-    if (filterType === 'movie' && isSeries) return false;
-    if (filterType === 'series' && !isSeries) return false;
-
-    // 2. Options level filters
-    const matchingOpts = (p.options || []).filter((o) => {
-      if (filterProvider !== 'all' && o.provider !== filterProvider) return false;
-      if (filterResolution !== 'all' && o.quality !== filterResolution) return false;
-      if (filterCodec !== 'all') {
-        const isX265 = /x265|hevc|10bit/i.test(o.qualityLabel || '');
-        if (filterCodec === 'x265' && !isX265) return false;
-        if (filterCodec === 'x264' && isX265) return false;
-      }
-      return true;
-    });
-
-    const hasLinkFilters = filterProvider !== 'all' || filterResolution !== 'all' || filterCodec !== 'all';
-    if (hasLinkFilters && matchingOpts.length === 0) return false;
-
-    return true;
-  });
-
-  $('#postCount').textContent = `(${filteredPosts.length})`;
-
-  $('#posts').innerHTML = filteredPosts.map((p) => {
+  $('#posts').innerHTML = state.posts.map((p) => {
+    // Posts are already filtered server-side; this only decides which chips
+    // (options) within an already-matching post to display — no extra fetch.
     const allOpts = p.options || [];
     const opts = allOpts.filter((o) => {
       if (filterProvider !== 'all' && o.provider !== filterProvider) return false;
@@ -109,13 +124,13 @@ export function renderPosts(state) {
           <div class="actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <button class="btn small" data-resolve-post="${p.id}">Resolve preferred</button>
             ${(() => {
-              const resolvedJobs = (state.jobs || []).filter(j => 
-                j.postLink === p.link && 
-                j.status === 'done' && 
-                j.result && 
+              const resolvedJobs = (state.jobs || []).filter(j =>
+                j.postLink === p.link &&
+                j.status === 'done' &&
+                j.result &&
                 j.result.finalUrl
               );
-              
+
               if (resolvedJobs.length === 1) {
                 const job = resolvedJobs[0];
                 return `
@@ -144,4 +159,7 @@ export function renderPosts(state) {
       </div>
     `;
   }).join('') || '<div class="muted" style="padding: 10px 0;">No posts match the current filters.</div>';
+
+  const btnLoadMore = $('#btnLoadMorePosts');
+  if (btnLoadMore) btnLoadMore.style.display = offset < total ? '' : 'none';
 }
