@@ -223,9 +223,41 @@
           <label>GDFlix Password
             <input name="gdflixPassword" type="password" placeholder="Password" />
           </label>
-          <label>GDFlix Cookies (Laravel_session=...; XSRF-TOKEN=... or JSON)
-            <textarea name="gdflixCookies" rows="3" placeholder="Laravel_session=...; XSRF-TOKEN=..."></textarea>
-          </label>
+          
+          <div style="margin-top: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-weight: bold; font-size: 13px; color: var(--text);">GDFlix Cookies (Per-Domain Manager)</span>
+              <button type="button" id="btnAddGdflixCookie" class="btn" style="padding: 2px 8px; font-size: 11px; height: auto;">+ Add Domain</button>
+            </div>
+            <textarea name="gdflixCookies" style="display: none;"></textarea>
+            
+            <!-- Cookie manager UI -->
+            <div id="gdflixCookieManager" style="background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 8px;">
+              <div id="gdflixCookieList" style="display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto;">
+                <!-- Dynamically populated -->
+              </div>
+              <div id="gdflixNoCookies" style="color: #8b949e; font-size: 12px; text-align: center; padding: 10px 0;">
+                No cookies configured yet. Click "+ Add Domain" to configure cookies for a GDFlix mirror.
+              </div>
+            </div>
+            
+            <!-- Cookie editor UI (hidden by default) -->
+            <div id="gdflixCookieEditor" style="display: none; background: #161b22; border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-top: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+              <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #58a6ff;" id="gdflixEditorTitle">Add Domain Cookies</div>
+              <div style="margin-bottom: 8px;">
+                <label style="font-size: 11px; color: #8b949e; display: block; margin-bottom: 4px;">Domain (e.g. gdflix.app, gdflix.io, or * for default)</label>
+                <input type="text" id="gdflixCookieDomain" placeholder="gdflix.app" style="width: 100%; padding: 4px 8px; font-size: 12px; background: #0d1117; border: 1px solid var(--border); border-radius: 4px; color: var(--text);" />
+              </div>
+              <div style="margin-bottom: 8px;">
+                <label style="font-size: 11px; color: #8b949e; display: block; margin-bottom: 4px;">Cookies (JSON or Semicolon-separated string)</label>
+                <textarea id="gdflixCookieValue" rows="4" placeholder="Laravel_session=...; XSRF-TOKEN=..." style="width: 100%; padding: 6px 8px; font-size: 11px; font-family: monospace; background: #0d1117; border: 1px solid var(--border); border-radius: 4px; color: var(--text); resize: vertical;"></textarea>
+              </div>
+              <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                <button type="button" id="btnCancelGdflixCookie" class="btn ghost" style="padding: 4px 10px; font-size: 11px; height: auto;">Cancel</button>
+                <button type="button" id="btnApplyGdflixCookie" class="btn" style="padding: 4px 10px; font-size: 11px; height: auto;">Apply</button>
+              </div>
+            </div>
+          </div>
         </fieldset>
       </div>
 

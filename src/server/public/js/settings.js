@@ -4,13 +4,14 @@ import { populateWatcherSettings, serializeWatcherSettings } from './settings/wa
 import { populateBypassSettings, serializeBypassSettings } from './settings/bypass.js';
 import { populateSheetsSettings, serializeSheetsSettings } from './settings/sheets.js';
 import { populateCaptchaSettings, serializeCaptchaSettings, updateGroupVisibility } from './settings/captcha.js';
-import { populateGdflixSettings, serializeGdflixSettings } from './settings/gdflix.js';
+import { populateGdflixSettings, serializeGdflixSettings, initGdflixSettings } from './settings/gdflix.js';
 
 export function initSettings(refreshAll) {
   const providerSelect = $('#captchaProviderSelect');
   const f = $('#settingsForm');
 
   providerSelect.addEventListener('change', () => updateGroupVisibility(f));
+  initGdflixSettings(f);
 
   $('#btnSettings').onclick = async () => {
     const cfg = await api('/config');

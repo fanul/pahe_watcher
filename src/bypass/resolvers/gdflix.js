@@ -12,11 +12,13 @@ const log = createLogger('resolver:gdflix');
 
 const GDFLIX_HOST_RE = /gdflix\.[a-z]+/i;
 
-// Buttons on a gdflix file page, most-preferred first.
 const LINK_BUTTON_SELECTORS = [
+  'a:has-text("G-Drive Link")',
+  'button:has-text("G-Drive Link")',
+  'a:has(b:has-text("G-Drive Link"))',
+  'b:has-text("G-Drive Link")',
   'button#ddl',
   '#ddl',
-  'button:has-text("G-Drive Link")',
   'a:has-text("Cloud Download")',
   'a:has-text("Google Drive")',
   'a:has-text("GDToT")',
@@ -145,50 +147,97 @@ export async function ensureGdflixLogin(page, credentials, ctx = {}) {
     });
   };
 
+  const hostname = new URL(page.url()).hostname.toLowerCase();
   let initialStatus = await getLoginStatus();
-  ctx.log?.(`[GDFlix] Initial page check: status is "${initialStatus}"`);
+  ctx.log?.(`[GDFlix] Current domain: ${hostname} | Initial login check: "${initialStatus}"`);
 
   if (cookies) {
     try {
-      const hostname = new URL(page.url()).hostname;
       const baseDomain = hostname.split('.').slice(-2).join('.'); // e.g. gdflix.io
       const mirrorDomain = `.${baseDomain}`;
 
-      const sourceDomains = extractCookieSourceDomains(cookies);
-      const mismatched = sourceDomains.filter((d) => !d.replace(/^\./, '').endsWith(baseDomain));
-      if (mismatched.length > 0) {
-        ctx.log?.(
-          `[GDFlix] ⚠ Configured cookies were exported from ${mismatched.join(', ')}, but the browser is on ` +
-          `${hostname}. GDFlix cookies are domain-scoped and never sent cross-domain, so they would silently ` +
-          `do nothing on this mirror — remapping them to ${mirrorDomain} instead.`,
-        );
+      let activeCookies = null;
+      let cookieDomainInfo = '';
+
+      let cookieMap = null;
+      if (cookies.trim().startsWith('{')) {
+        try {
+          cookieMap = JSON.parse(cookies);
+        } catch {}
       }
 
-      const parsed = parseCookieString(cookies, mirrorDomain);
+      if (cookieMap && typeof cookieMap === 'object' && !Array.isArray(cookieMap)) {
+        ctx.log?.(`[GDFlix] Found domain-mapped cookies configuration in settings (Total domains: ${Object.keys(cookieMap).length})`);
+        // Find best match in keys
+        let matchKey = Object.keys(cookieMap).find(k => {
+          const cleanK = k.replace(/^\./, '').toLowerCase();
+          return hostname.endsWith(cleanK) || baseDomain === cleanK;
+        });
 
-      if (parsed.length > 0) {
-        ctx.log?.(`[GDFlix] Injecting ${parsed.length} session cookie(s) scoped to ${mirrorDomain}...`);
-        await page.context().addCookies(parsed);
+        if (matchKey) {
+          activeCookies = cookieMap[matchKey];
+          cookieDomainInfo = `specifically configured for "${matchKey}"`;
+          ctx.log?.(`[GDFlix] Domain match found! Using cookies specifically configured for "${matchKey}"`);
+        } else {
+          // Fallback to default or wildcard keys
+          const fallbackKey = Object.keys(cookieMap).find(k => k === 'default' || k === '*');
+          if (fallbackKey) {
+            activeCookies = cookieMap[fallbackKey];
+            cookieDomainInfo = `using fallback "${fallbackKey}"`;
+            ctx.log?.(`[GDFlix] No exact domain match for ${hostname}. Using fallback "${fallbackKey}" cookies.`);
+          } else {
+            ctx.log?.(
+              `[GDFlix] ⚠ No matching cookies found for ${hostname} (available domains: ${Object.keys(cookieMap).join(', ') || 'none'}). ` +
+              `You can configure cookies for this mirror domain in Settings.`
+            );
+          }
+        }
+      } else {
+        activeCookies = cookies;
+        cookieDomainInfo = 'legacy fallback (all domains)';
+        ctx.log?.(`[GDFlix] Using legacy cookie string (no domain mapping detected).`);
+      }
 
-        // Reload if not already logged in to apply session cookies
-        if (initialStatus !== 'logged-in') {
-          ctx.log?.('[GDFlix] Reloading page to apply cookies...');
-          await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+      if (activeCookies) {
+        const sourceDomains = extractCookieSourceDomains(activeCookies);
+        if (sourceDomains.length > 0) {
+          ctx.log?.(`[GDFlix] Extracted source domain(s) from cookie: ${sourceDomains.join(', ')}`);
+        }
+        
+        const mismatched = sourceDomains.filter((d) => !d.replace(/^\./, '').endsWith(baseDomain));
+        if (mismatched.length > 0) {
+          ctx.log?.(
+            `[GDFlix] ⚠ Cookies (${cookieDomainInfo}) were exported from ${mismatched.join(', ')}, but browser is on ` +
+            `${hostname}. Remapping them to ${mirrorDomain} to force injection.`,
+          );
         }
 
-        const postCookieStatus = await getLoginStatus();
-        ctx.log?.(`[GDFlix] Post-cookie check: status is "${postCookieStatus}"`);
+        const parsed = parseCookieString(activeCookies, mirrorDomain);
 
-        if (postCookieStatus === 'logged-in') {
-          ctx.log?.('[GDFlix] Authenticated successfully using cookies.');
-          return { loggedIn: true, method: 'cookies' };
-        } else {
-          ctx.log?.(
-            `[GDFlix] ❌ Cookie login did not authenticate on ${hostname}. This means the session ` +
-            `(PHPSESSID/token) itself isn't valid here — either it belongs to a different GDFlix account/mirror ` +
-            `backend than the one now active, or it expired. Re-export cookies while logged in on ${hostname} ` +
-            `specifically, or configure email/password login instead.`,
-          );
+        if (parsed.length > 0) {
+          const cookieNames = parsed.map(c => c.name);
+          ctx.log?.(`[GDFlix] Injecting ${parsed.length} cookie(s) scoped to ${mirrorDomain}: [${cookieNames.join(', ')}]`);
+          await page.context().addCookies(parsed);
+
+          // Reload if not already logged in to apply session cookies
+          if (initialStatus !== 'logged-in') {
+            ctx.log?.('[GDFlix] Reloading page to apply cookies...');
+            await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+          }
+
+          const postCookieStatus = await getLoginStatus();
+          ctx.log?.(`[GDFlix] Post-cookie check: status is "${postCookieStatus}"`);
+
+          if (postCookieStatus === 'logged-in') {
+            ctx.log?.(`[GDFlix] Authenticated successfully using cookies (${cookieDomainInfo}).`);
+            return { loggedIn: true, method: 'cookies' };
+          } else {
+            ctx.log?.(
+              `[GDFlix] ❌ Cookie login did not authenticate on ${hostname} (${cookieDomainInfo}). ` +
+              `This means the session is invalid or expired for this mirror. ` +
+              `Try logging in on ${hostname} and updating settings.`,
+            );
+          }
         }
       }
     } catch (err) {
@@ -262,29 +311,55 @@ export async function resolveGdflix(page, { credentials, captcha } = {}, ctx = {
     return { finalUrl: direct, linkType: classifyFinalLink(direct) };
   }
 
-  // 2) Otherwise click the best download button and capture navigation / new tab.
+  // 2) Otherwise click the best download button and wait for the final link to generate
   for (const sel of LINK_BUTTON_SELECTORS) {
     const btn = await page.$(sel).catch(() => null);
     if (!btn) continue;
-    ctx.log?.(`Clicking "${sel}"…`);
-
-    const context = page.context();
-    const popupP = context.waitForEvent('page', { timeout: 8000 }).catch(() => null);
-    const navP = page.waitForNavigation({ timeout: 8000 }).catch(() => null);
+    
+    ctx.log?.(`[GDFlix] Clicking button "${sel}" to generate download link...`);
     await btn.click().catch(() => {});
-    const popup = await popupP;
 
-    // check popup first
-    if (popup) {
-      await popup.waitForLoadState('domcontentloaded').catch(() => {});
-      const u = popup.url();
-      const found = await findFinalIn(popup, u);
-      if (found) { await popup.close().catch(() => {}); return found; }
-      await popup.close().catch(() => {});
+    ctx.log?.('[GDFlix] Waiting up to 15 seconds for Google Drive or final link to generate...');
+    const maxPollTimeMs = 15000;
+    const pollIntervalMs = 500;
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxPollTimeMs) {
+      // Check all active pages/tabs in the context (some clicks open popups/new tabs)
+      const context = page.context();
+      const pages = context.pages();
+      for (const p of pages) {
+        // Check 1: Is the page URL itself a final link?
+        const u = p.url();
+        if (FINAL_HOST_RE.test(u)) {
+          ctx.log?.(`[GDFlix] Found final URL in browser address bar: ${u}`);
+          const linkType = classifyFinalLink(u);
+          if (p !== page) {
+            await p.close().catch(() => {});
+          }
+          return { finalUrl: u, linkType };
+        }
+        
+        // Check 2: Is there a matching final link inside this page's DOM?
+        const href = await p.evaluate((re) => {
+          const rx = new RegExp(re, 'i');
+          const a = [...document.querySelectorAll('a[href]')].find((x) => rx.test(x.href));
+          return a ? a.href : null;
+        }, FINAL_HOST_RE.source).catch(() => null);
+        
+        if (href) {
+          ctx.log?.(`[GDFlix] Successfully captured generated link from page DOM: ${href}`);
+          if (p !== page) {
+            await p.close().catch(() => {});
+          }
+          return { finalUrl: href, linkType: classifyFinalLink(href) };
+        }
+      }
+      
+      await page.waitForTimeout(pollIntervalMs).catch(() => {});
     }
-    await navP;
-    const found = await findFinalIn(page, page.url());
-    if (found) return found;
+    
+    ctx.log?.(`[GDFlix] Timeout waiting for link after clicking "${sel}". Trying next selector if available...`);
   }
 
   // 3) Nothing found. If this is specifically because the file is gated behind
