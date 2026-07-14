@@ -2,7 +2,7 @@ import { createLogger } from '../core/logger.js';
 import { BrowserManager } from './browser.js';
 import { createCaptchaSolver, detectCaptcha } from './captcha/index.js';
 import { isGdflixUrl, resolveGdflix, classifyFinalLink } from './resolvers/gdflix.js';
-import { isGoogleAuthHost, ensureGoogleLogin } from './resolvers/googleDrive.js';
+import { isGoogleAuthHost, ensureGoogleLogin, normalizeGoogleDriveLink } from './resolvers/googleDrive.js';
 
 const log = createLogger('bypass');
 
@@ -115,6 +115,17 @@ export class BypassEngine {
 
       settled = await this._driveToFinal(activePages, ctx, timeoutMs);
       if (!settled) throw new Error('Timed out before reaching a final link');
+
+      // Whichever Drive URL shape got captured (varies by which link/button
+      // the GDFlix page happened to expose), normalize to the direct-download
+      // form so the recorded link doesn't just open a viewer/confirmation page.
+      if (settled.linkType === 'google-drive') {
+        const normalized = normalizeGoogleDriveLink(settled.finalUrl);
+        if (normalized !== settled.finalUrl) {
+          ctx.log?.(`Normalized Drive link to direct-download form: ${normalized}`);
+          settled = { ...settled, finalUrl: normalized };
+        }
+      }
 
       ctx.log?.(`✔ Final link (${settled.linkType}): ${settled.finalUrl}`);
       return { ...settled, hops };

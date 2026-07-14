@@ -22,6 +22,54 @@ export function isGoogleAuthHost(url) {
   }
 }
 
+/**
+ * Normalize a resolved Drive URL into its direct-download form. Google serves
+ * the same file through several URL shapes:
+ *   - drive.usercontent.google.com/open?id=X          -> "open in browser" page
+ *   - drive.usercontent.google.com/download?id=X&export=download  -> direct download
+ *   - drive.google.com/file/d/X/view                  -> classic "share" page
+ *   - drive.google.com/uc?id=X                        -> legacy direct-download form
+ * Whichever shape got captured (depends on which link/button happened to be on
+ * the GDFlix page), rewrite it to the one that actually triggers a download
+ * instead of showing a viewer/confirmation page first.
+ */
+export function normalizeGoogleDriveLink(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+
+    if (host === 'drive.usercontent.google.com' && u.pathname === '/open') {
+      u.pathname = '/download';
+      if (!u.searchParams.has('export')) u.searchParams.set('export', 'download');
+      return u.toString();
+    }
+
+    if (host === 'drive.usercontent.google.com' && u.pathname === '/download' && !u.searchParams.has('export')) {
+      u.searchParams.set('export', 'download');
+      return u.toString();
+    }
+
+    const shareMatch = u.pathname.match(/^\/file\/d\/([^/]+)/);
+    if (host === 'drive.google.com' && shareMatch) {
+      const out = new URL('https://drive.usercontent.google.com/download');
+      out.searchParams.set('id', shareMatch[1]);
+      out.searchParams.set('export', 'download');
+      const authuser = u.searchParams.get('authuser');
+      if (authuser) out.searchParams.set('authuser', authuser);
+      return out.toString();
+    }
+
+    if (host === 'drive.google.com' && u.pathname === '/uc' && !u.searchParams.has('export')) {
+      u.searchParams.set('export', 'download');
+      return u.toString();
+    }
+
+    return url;
+  } catch {
+    return url;
+  }
+}
+
 export function isGoogleDriveHost(url) {
   try {
     const h = new URL(url).hostname.toLowerCase();

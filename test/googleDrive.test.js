@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isGoogleAuthHost, isGoogleDriveHost, ensureGoogleLogin } from '../src/bypass/resolvers/googleDrive.js';
+import { isGoogleAuthHost, isGoogleDriveHost, ensureGoogleLogin, normalizeGoogleDriveLink } from '../src/bypass/resolvers/googleDrive.js';
 
 test('isGoogleAuthHost / isGoogleDriveHost match real Google hosts and reject look-alikes', () => {
   assert.equal(isGoogleAuthHost('https://accounts.google.com/ServiceLogin?continue=x'), true);
@@ -69,4 +69,39 @@ test('ensureGoogleLogin: cookies exported from a different Google subdomain stil
   const result = await ensureGoogleLogin(page, { cookies: jsonCookies }, { log: () => {} });
   assert.equal(result.loggedIn, true);
   assert.equal(injectedDomain, '.google.com');
+});
+
+test('normalizeGoogleDriveLink: rewrites the "open" (view) page to the direct-download form', () => {
+  // Regression: reported case — the resolver captured an /open?id=... URL,
+  // which shows a viewer/confirmation page instead of triggering a download.
+  const input = 'https://drive.usercontent.google.com/open?id=1kltbgljiDBaofuiDu7TZJlBKY-kDlPg_&authuser=0';
+  const out = new URL(normalizeGoogleDriveLink(input));
+  assert.equal(out.hostname, 'drive.usercontent.google.com');
+  assert.equal(out.pathname, '/download');
+  assert.equal(out.searchParams.get('id'), '1kltbgljiDBaofuiDu7TZJlBKY-kDlPg_');
+  assert.equal(out.searchParams.get('export'), 'download');
+  assert.equal(out.searchParams.get('authuser'), '0');
+});
+
+test('normalizeGoogleDriveLink: leaves an already-correct download link unchanged', () => {
+  const correct = 'https://drive.usercontent.google.com/download?id=1tYCC8uBXyi69ssbjHEOlv1phBohjlTdU&export=download&authuser=0';
+  assert.equal(normalizeGoogleDriveLink(correct), correct);
+});
+
+test('normalizeGoogleDriveLink: converts a classic share link (/file/d/{id}/view) to direct-download form', () => {
+  const out = new URL(normalizeGoogleDriveLink('https://drive.google.com/file/d/1abcXYZ/view?usp=sharing'));
+  assert.equal(out.hostname, 'drive.usercontent.google.com');
+  assert.equal(out.pathname, '/download');
+  assert.equal(out.searchParams.get('id'), '1abcXYZ');
+  assert.equal(out.searchParams.get('export'), 'download');
+});
+
+test('normalizeGoogleDriveLink: adds export=download to a legacy /uc link missing it', () => {
+  const out = new URL(normalizeGoogleDriveLink('https://drive.google.com/uc?id=1abcXYZ'));
+  assert.equal(out.searchParams.get('export'), 'download');
+});
+
+test('normalizeGoogleDriveLink: leaves unrelated URLs untouched', () => {
+  const other = 'https://pixeldrain.com/u/abc123';
+  assert.equal(normalizeGoogleDriveLink(other), other);
 });
