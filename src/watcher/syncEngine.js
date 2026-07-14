@@ -36,6 +36,7 @@ export class SyncEngine {
    * refreshes/enriches them, not a repeated listing pass.
    */
   async listingSyncPage(page, perPage, { direction } = {}) {
+    log.info(`Listing page ${page} (direction: ${direction || 'default'})...`);
     const { posts, totalPosts, totalPages } = await this.client.getPostsPageMeta(page, perPage);
     let discovered = 0;
 
@@ -57,6 +58,7 @@ export class SyncEngine {
       }
     });
 
+    log.info(`Page ${page} listing sync complete: found ${posts.length} posts (${discovered} new to database).`);
     return { posts, discovered, totalPosts, totalPages };
   }
 
@@ -68,6 +70,9 @@ export class SyncEngine {
    */
   async deepSyncPost(postId) {
     const existing = this.store.getPost(postId);
+    const titleLabel = existing ? existing.title : `ID ${postId}`;
+    log.info(`Deep-syncing post: "${titleLabel}"...`);
+
     let options = [];
     let meta = { poster: '', rating: '', synopsis: '', year: null, genre: '', durationMinutes: null, director: '', creator: '', actors: '' };
     let full;
@@ -76,7 +81,7 @@ export class SyncEngine {
       options = parseDownloadOptions(full.contentHtml);
       meta = parsePostMetadata(full.contentHtml);
     } catch (err) {
-      log.warn('Failed to fetch/parse post content', { id: postId, error: String(err) });
+      log.error(`Failed to deep-sync post "${titleLabel}"`, { id: postId, error: String(err) });
       return existing;
     }
 
@@ -102,6 +107,7 @@ export class SyncEngine {
     };
     this.store.markPost(entry);
     bus.emit('post:new', entry);
+    log.info(`Deep-sync complete for: "${entry.title}" (parsed ${options.length} download options).`);
     return entry;
   }
 
@@ -211,6 +217,8 @@ export class SyncEngine {
       cursor = this._setBackfillCursor({ direction }); // change direction, keep current page
     }
 
+    log.info(`Starting backfill batch: processing ${batchSize} pages (direction: ${cursor.direction}, deepSync: ${deepSync}, current page: ${cursor.page})...`);
+
     const perPage = this.config.watcher.perPage || 10;
     const step = cursor.direction === 'newer' ? -1 : 1;
 
@@ -227,6 +235,7 @@ export class SyncEngine {
         if (page < 1) break;
         if (totalPages && page > totalPages) break;
 
+        log.info(`Processing backfill page ${page} of batch (processed ${pagesProcessed}/${batchSize})...`);
         const result = await this.listingSyncPage(page, perPage, { direction: cursor.direction });
         totalPages = result.totalPages ?? totalPages;
         totalPosts = result.totalPosts ?? totalPosts;
@@ -240,7 +249,10 @@ export class SyncEngine {
         if (deepSync) {
           for (const p of result.posts) {
             const existing = this.store.getPost(p.id);
-            if (existing?.options?.length > 0 || existing?.synopsis) continue; // already has content
+            if (existing?.options?.length > 0 || existing?.synopsis) {
+              log.info(`Post "${existing.title || p.title}" already has options/synopsis. Skipping deep sync.`);
+              continue;
+            }
             const entry = await this.deepSyncPost(p.id);
             if (entry) {
               postsDeepSynced += 1;
@@ -281,6 +293,7 @@ export class SyncEngine {
 
     const ids = this.store.listUnsyncedPostIds(batchSize);
     const entries = [];
+    log.info(`Starting deep-sync sweep for up to ${batchSize} shallow posts (remaining unsynced: ${this.store.countUnsyncedPosts()})...`);
     for (const id of ids) {
       const entry = await this.deepSyncPost(id);
       if (entry) entries.push(entry);
@@ -305,6 +318,7 @@ export class SyncEngine {
 
     const ids = this.store.listPostsMissingExtendedMetadata(batchSize);
     const entries = [];
+    log.info(`Starting metadata backfill sweep for up to ${batchSize} posts (remaining missing metadata: ${this.store.countPostsMissingExtendedMetadata()})...`);
     for (const id of ids) {
       const entry = await this.deepSyncPost(id);
       if (entry) entries.push(entry);
