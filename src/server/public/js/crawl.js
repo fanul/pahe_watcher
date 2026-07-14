@@ -14,6 +14,8 @@ export function initCrawl(refreshAll) {
   const crawlDeepSync = $('#crawlDeepSync');
   const deepSyncStatus = $('#deepSyncStatus');
   const metadataBackfillStatus = $('#metadataBackfillStatus');
+  const deepSyncBatchSize = $('#deepSyncBatchSize');
+  const metadataBackfillBatchSize = $('#metadataBackfillBatchSize');
 
   refreshDeepSyncStatus();
   refreshMetadataBackfillStatus();
@@ -57,8 +59,12 @@ export function initCrawl(refreshAll) {
 
   btnDeepSyncSweep.onclick = async () => {
     btnDeepSyncSweep.disabled = true;
+    const batchSize = +deepSyncBatchSize.value || 20;
     try {
-      const res = await api('/sync/deep-sync/run', { method: 'POST', body: '{}' });
+      const res = await api('/sync/deep-sync/run', {
+        method: 'POST',
+        body: JSON.stringify({ batchSize }),
+      });
       accumulated = [...res.entries, ...accumulated];
       renderCrawlResults();
       deepSyncStatus.textContent = `Deep-synced ${res.processed} post(s), ${res.remaining} still pending.`;
@@ -69,8 +75,12 @@ export function initCrawl(refreshAll) {
 
   btnMetadataBackfillSweep.onclick = async () => {
     btnMetadataBackfillSweep.disabled = true;
+    const batchSize = +metadataBackfillBatchSize.value || 20;
     try {
-      const res = await api('/sync/metadata-backfill/run', { method: 'POST', body: '{}' });
+      const res = await api('/sync/metadata-backfill/run', {
+        method: 'POST',
+        body: JSON.stringify({ batchSize }),
+      });
       accumulated = [...res.entries, ...accumulated];
       renderCrawlResults();
       metadataBackfillStatus.textContent = `Backfilled ${res.processed} post(s), ${res.remaining} still pending.`;

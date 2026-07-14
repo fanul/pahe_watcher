@@ -140,11 +140,23 @@
         </div>
         <div class="crawl-controls" style="margin-top: 8px;">
           <span id="deepSyncStatus" class="muted small"></span>
-          <button id="btnDeepSyncSweep" class="btn small ghost">Deep-sync pending posts</button>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin: 0;">
+              Batch size:
+              <input id="deepSyncBatchSize" type="number" value="20" min="1" max="1000" style="width: 70px; padding: 4px 8px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text);" />
+            </label>
+            <button id="btnDeepSyncSweep" class="btn small ghost">Deep-sync pending posts</button>
+          </div>
         </div>
         <div class="crawl-controls" style="margin-top: 8px;">
           <span id="metadataBackfillStatus" class="muted small"></span>
-          <button id="btnMetadataBackfillSweep" class="btn small ghost">Backfill extended metadata</button>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin: 0;">
+              Batch size:
+              <input id="metadataBackfillBatchSize" type="number" value="20" min="1" max="1000" style="width: 70px; padding: 4px 8px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text);" />
+            </label>
+            <button id="btnMetadataBackfillSweep" class="btn small ghost">Backfill extended metadata</button>
+          </div>
         </div>
         <div id="crawlResults" class="list" style="margin-top: 12px;">
           <div class="muted" style="padding: 10px 0;">No batches run yet. Click "Run Batch" to start syncing.</div>
