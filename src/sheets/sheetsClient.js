@@ -54,16 +54,56 @@ export class SheetsClient {
     if (this._headerEnsured) return;
     const sheets = await this._client();
     const range = `${this.tab}!A1:I1`;
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId: this.sheetId, range });
-    const row = res.data.values?.[0];
-    if (!row || row.length === 0) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: this.sheetId,
-        range,
-        valueInputOption: 'RAW',
-        requestBody: { values: [HEADER] },
-      });
-      log.info('Wrote header row to sheet');
+    try {
+      const res = await sheets.spreadsheets.values.get({ spreadsheetId: this.sheetId, range });
+      const row = res.data.values?.[0];
+      if (!row || row.length === 0) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: this.sheetId,
+          range,
+          valueInputOption: 'RAW',
+          requestBody: { values: [HEADER] },
+        });
+        log.info('Wrote header row to sheet');
+      }
+    } catch (err) {
+      // If the sheet tab does not exist, Google API throws a 400 error containing "Unable to parse range"
+      const isRangeError = err.message && (
+        err.message.includes('Unable to parse range') || 
+        err.message.includes('parse range')
+      );
+      if (isRangeError) {
+        log.info(`Sheet tab "${this.tab}" not found, creating it...`);
+        try {
+          await sheets.spreadsheets.batchUpdate({
+            spreadsheetId: this.sheetId,
+            requestBody: {
+              requests: [
+                {
+                  addSheet: {
+                    properties: {
+                      title: this.tab,
+                    },
+                  },
+                },
+              ],
+            },
+          });
+          // Now write the header
+          await sheets.spreadsheets.values.update({
+            spreadsheetId: this.sheetId,
+            range,
+            valueInputOption: 'RAW',
+            requestBody: { values: [HEADER] },
+          });
+          log.info(`Created sheet tab "${this.tab}" and wrote header row`);
+        } catch (createErr) {
+          log.error('Failed to automatically create sheet tab', { error: String(createErr) });
+          throw err; // throw original range error if we failed to create
+        }
+      } else {
+        throw err;
+      }
     }
     this._headerEnsured = true;
   }

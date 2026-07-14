@@ -132,3 +132,29 @@ legend { font-size: 12px; font-weight: 700; color: var(--accent); padding: 0 6px
 .muted-btn:hover { color: var(--text); border-color: var(--muted); }
 .danger-btn { background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); color: #f87171; }
 .danger-btn:hover { background: rgba(239, 68, 68, 0.22); border-color: #ef4444; color: #ef4444; }
+
+/* Highlight sheet append failures where we successfully captured the link */
+.card.sheet-error {
+  background: rgba(10, 37, 64, 0.45) !important;
+  border-color: rgba(59, 130, 246, 0.5) !important;
+}
+.card.sheet-error .job-status.failed {
+  background: rgba(59, 130, 246, 0.25) !important;
+  color: #60a5fa !important;
+}
+.card.sheet-error .final-link {
+  color: #60a5fa !important;
+}
+
+/* Highlight successful sheet writes where we successfully logged it */
+.card.sheet-success {
+  background: rgba(16, 46, 23, 0.45) !important;
+  border-color: rgba(16, 124, 65, 0.5) !important;
+}
+.card.sheet-success .job-status.done {
+  background: rgba(16, 124, 65, 0.25) !important;
+  color: #4ade80 !important;
+}
+.card.sheet-success .final-link {
+  color: #4ade80 !important;
+}
