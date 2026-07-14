@@ -10,7 +10,13 @@ const log = createLogger('resolver:gdflix');
  * preference. Tune `LINK_BUTTON_SELECTORS` against the live page if it breaks.
  */
 
-const GDFLIX_HOST_RE = /gdflix\.[a-z]+/i;
+// Anchored to an actual domain label: "gdflix" must sit at the start of the
+// hostname or right after a dot, and the TLD must run to the end of the
+// string. An unanchored /gdflix\.[a-z]+/ would also match unrelated hosts
+// that merely contain that substring, e.g. "not-gdflix.example.com" (matches
+// "gdflix.example") — which would wrongly trigger cookie injection (with the
+// user's real GDFlix session) against an untrusted page.
+const GDFLIX_HOST_RE = /(^|\.)gdflix\.[a-z]{2,}$/i;
 
 const LINK_BUTTON_SELECTORS = [
   'a:has-text("G-Drive Link")',
@@ -302,67 +308,47 @@ export async function resolveGdflix(page, { credentials, captcha } = {}, ctx = {
   }
 
   // 1) Look for an already-present final link in the DOM.
-  const direct = await page.evaluate((re) => {
-    const rx = new RegExp(re, 'i');
-    const a = [...document.querySelectorAll('a[href]')].find((x) => rx.test(x.href));
-    return a ? a.href : null;
-  }, FINAL_HOST_RE.source);
+  const direct = await scanPageForFinalLink(page, FINAL_HOST_RE.source);
   if (direct) {
     return { finalUrl: direct, linkType: classifyFinalLink(direct) };
   }
 
-  // 2) Otherwise click the best download button and wait for the final link to generate
+  // 2) The download button often only renders a short moment after login
+  // completes (e.g. once an AJAX call resolves). A single instant page.$()
+  // check misses that — wait for any known control to actually appear first.
+  const combinedSelector = LINK_BUTTON_SELECTORS.join(', ');
+  ctx.log?.('[GDFlix] Waiting for a download-link button to appear...');
+  const firstBtn = await page
+    .waitForSelector(combinedSelector, { timeout: 10000, state: 'visible' })
+    .catch(() => null);
+
+  let triedFingerprint = null;
+  if (firstBtn) {
+    const desc = await elementFingerprint(firstBtn);
+    triedFingerprint = desc;
+    ctx.log?.(`[GDFlix] Found button: ${desc}`);
+    const found = await clickAndAwaitLink(page, firstBtn, desc, ctx);
+    if (found) return found;
+  } else {
+    ctx.log?.('[GDFlix] No known download-link button appeared within 10s.');
+  }
+
+  // 3) Fallback sweep: some pages expose more than one matching control
+  // (e.g. distinct quality/host buttons) — try the rest by preference order,
+  // skipping whichever element firstBtn already was (avoid a wasted re-click).
   for (const sel of LINK_BUTTON_SELECTORS) {
     const btn = await page.$(sel).catch(() => null);
     if (!btn) continue;
-    
-    ctx.log?.(`[GDFlix] Clicking button "${sel}" to generate download link...`);
-    await btn.click().catch(() => {});
+    const fingerprint = await elementFingerprint(btn);
+    if (fingerprint === triedFingerprint) continue;
 
-    ctx.log?.('[GDFlix] Waiting up to 15 seconds for Google Drive or final link to generate...');
-    const maxPollTimeMs = 15000;
-    const pollIntervalMs = 500;
-    const startTime = Date.now();
-    
-    while (Date.now() - startTime < maxPollTimeMs) {
-      // Check all active pages/tabs in the context (some clicks open popups/new tabs)
-      const context = page.context();
-      const pages = context.pages();
-      for (const p of pages) {
-        // Check 1: Is the page URL itself a final link?
-        const u = p.url();
-        if (FINAL_HOST_RE.test(u)) {
-          ctx.log?.(`[GDFlix] Found final URL in browser address bar: ${u}`);
-          const linkType = classifyFinalLink(u);
-          if (p !== page) {
-            await p.close().catch(() => {});
-          }
-          return { finalUrl: u, linkType };
-        }
-        
-        // Check 2: Is there a matching final link inside this page's DOM?
-        const href = await p.evaluate((re) => {
-          const rx = new RegExp(re, 'i');
-          const a = [...document.querySelectorAll('a[href]')].find((x) => rx.test(x.href));
-          return a ? a.href : null;
-        }, FINAL_HOST_RE.source).catch(() => null);
-        
-        if (href) {
-          ctx.log?.(`[GDFlix] Successfully captured generated link from page DOM: ${href}`);
-          if (p !== page) {
-            await p.close().catch(() => {});
-          }
-          return { finalUrl: href, linkType: classifyFinalLink(href) };
-        }
-      }
-      
-      await page.waitForTimeout(pollIntervalMs).catch(() => {});
-    }
-    
+    ctx.log?.(`[GDFlix] Clicking button "${sel}" to generate download link...`);
+    const found = await clickAndAwaitLink(page, btn, sel, ctx);
+    if (found) return found;
     ctx.log?.(`[GDFlix] Timeout waiting for link after clicking "${sel}". Trying next selector if available...`);
   }
 
-  // 3) Nothing found. If this is specifically because the file is gated behind
+  // 4) Nothing found. If this is specifically because the file is gated behind
   // a GDFlix account login and we couldn't establish one, say so clearly and
   // stop — retrying won't help until the credentials/cookies are fixed.
   const loginGateText = await page
@@ -398,18 +384,79 @@ function terminalError(message) {
   return err;
 }
 
-async function findFinalIn(page, currentUrl) {
-  if (FINAL_HOST_RE.test(currentUrl)) {
-    return { finalUrl: currentUrl, linkType: classifyFinalLink(currentUrl) };
-  }
-  const href = await page
+/** A cheap, stable-enough identity string for an element, used to dedupe clicks across selectors. */
+async function elementFingerprint(handle) {
+  return handle
+    .evaluate((el) => `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''} "${(el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 50)}"`)
+    .catch(() => null);
+}
+
+/**
+ * Scan a page for a final link. GDFlix "reveal link" panels don't always
+ * expose the result as a plain `<a href>` — some populate a readonly
+ * input/textarea (for copy-to-clipboard), a data-* attribute, or just render
+ * the URL as visible text. Check all of those, in that order of confidence.
+ */
+async function scanPageForFinalLink(target, reSource) {
+  return target
     .evaluate((re) => {
       const rx = new RegExp(re, 'i');
+
       const a = [...document.querySelectorAll('a[href]')].find((x) => rx.test(x.href));
-      return a ? a.href : null;
-    }, FINAL_HOST_RE.source)
+      if (a) return a.href;
+
+      const fields = [...document.querySelectorAll('input, textarea')];
+      for (const f of fields) {
+        if (f.value && rx.test(f.value)) return f.value;
+      }
+
+      const attrNames = ['data-href', 'data-url', 'data-clipboard-text', 'data-link'];
+      const attrEls = document.querySelectorAll(attrNames.map((a) => `[${a}]`).join(','));
+      for (const el of attrEls) {
+        for (const attr of attrNames) {
+          const v = el.getAttribute(attr);
+          if (v && rx.test(v)) return v;
+        }
+      }
+
+      const textMatch = document.body.innerText.match(new RegExp(`https?:\\/\\/[^\\s"'<>]{0,300}(?:${re})[^\\s"'<>]{0,150}`, 'i'));
+      return textMatch ? textMatch[0] : null;
+    }, reSource)
     .catch(() => null);
-  if (href) return { finalUrl: href, linkType: classifyFinalLink(href) };
+}
+
+/** Click a button/link, then poll every open tab for up to 15s for a resulting final link. */
+async function clickAndAwaitLink(page, btn, label, ctx) {
+  await btn.click().catch(() => {});
+
+  ctx.log?.(`[GDFlix] Clicked ${label} — waiting up to 15 seconds for Google Drive or final link to generate...`);
+  const maxPollTimeMs = 15000;
+  const pollIntervalMs = 500;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < maxPollTimeMs) {
+    // Check all active pages/tabs in the context (some clicks open popups/new tabs)
+    const pages = page.context().pages();
+    for (const p of pages) {
+      const u = p.url();
+      if (FINAL_HOST_RE.test(u)) {
+        ctx.log?.(`[GDFlix] Found final URL in browser address bar: ${u}`);
+        const linkType = classifyFinalLink(u);
+        if (p !== page) await p.close().catch(() => {});
+        return { finalUrl: u, linkType };
+      }
+
+      const found = await scanPageForFinalLink(p, FINAL_HOST_RE.source);
+      if (found) {
+        ctx.log?.(`[GDFlix] Successfully captured generated link: ${found}`);
+        if (p !== page) await p.close().catch(() => {});
+        return { finalUrl: found, linkType: classifyFinalLink(found) };
+      }
+    }
+
+    await page.waitForTimeout(pollIntervalMs).catch(() => {});
+  }
+
   return null;
 }
 
