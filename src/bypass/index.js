@@ -247,6 +247,7 @@ export class BypassEngine {
             { credentials: this.config.bypass.gdflix, captcha: this.captcha },
             ctx,
           ).catch((err) => {
+            if (err?.terminal) throw err; // unrecoverable (e.g. login required) — stop looping, fail the job now
             ctx.log?.(`GDFlix resolve error: ${err.message}`);
             return null;
           });

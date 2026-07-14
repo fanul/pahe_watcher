@@ -44,6 +44,30 @@ export function classifyFinalLink(url) {
   return 'direct';
 }
 
+/** Best-effort peek at which domain(s) a JSON cookie export was recorded for, for logging only. */
+function extractCookieSourceDomains(cookieStr) {
+  if (!cookieStr || !cookieStr.trim().startsWith('[')) return [];
+  try {
+    const parsed = JSON.parse(cookieStr);
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed.map((c) => c.domain).filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * GDFlix operates many interchangeable mirror domains (gdflix.app, gdflix.io,
+ * gdflix.co, gdflix.dad, new2.gdflix.app, ...). Cookies exported from one
+ * mirror carry that mirror's own `domain` field, but the browser may resolve
+ * to a *different* mirror by the time it reaches the file page. A cookie's
+ * domain is enforced by the browser itself — a cookie scoped to `gdflix.app`
+ * is never sent on a request to `gdflix.io`, silently, with no error.
+ *
+ * So we always remap to whatever mirror is actually active (dot-prefixed base
+ * domain, so it also covers subdomains like new2./www.), ignoring the
+ * cookie's own recorded domain. This is a deliberate override, not a bug.
+ */
 function parseCookieString(cookieStr, domain) {
   if (!cookieStr) return [];
   // If it's JSON array, parse directly
@@ -64,7 +88,7 @@ function parseCookieString(cookieStr, domain) {
           return {
             name: c.name,
             value: c.value,
-            domain: c.domain || domain,
+            domain, // always remap — see comment above; never trust c.domain
             path: c.path || '/',
             secure: c.secure ?? true,
             httpOnly: c.httpOnly ?? false,
@@ -127,14 +151,25 @@ export async function ensureGdflixLogin(page, credentials, ctx = {}) {
   if (cookies) {
     try {
       const hostname = new URL(page.url()).hostname;
-      const parts = hostname.split('.');
-      const domain = parts.slice(-2).join('.'); // e.g. gdflix.co or gdflix.to
-      const parsed = parseCookieString(cookies, domain);
-      
+      const baseDomain = hostname.split('.').slice(-2).join('.'); // e.g. gdflix.io
+      const mirrorDomain = `.${baseDomain}`;
+
+      const sourceDomains = extractCookieSourceDomains(cookies);
+      const mismatched = sourceDomains.filter((d) => !d.replace(/^\./, '').endsWith(baseDomain));
+      if (mismatched.length > 0) {
+        ctx.log?.(
+          `[GDFlix] ⚠ Configured cookies were exported from ${mismatched.join(', ')}, but the browser is on ` +
+          `${hostname}. GDFlix cookies are domain-scoped and never sent cross-domain, so they would silently ` +
+          `do nothing on this mirror — remapping them to ${mirrorDomain} instead.`,
+        );
+      }
+
+      const parsed = parseCookieString(cookies, mirrorDomain);
+
       if (parsed.length > 0) {
-        ctx.log?.(`[GDFlix] Injecting ${parsed.length} session cookies...`);
+        ctx.log?.(`[GDFlix] Injecting ${parsed.length} session cookie(s) scoped to ${mirrorDomain}...`);
         await page.context().addCookies(parsed);
-        
+
         // Reload if not already logged in to apply session cookies
         if (initialStatus !== 'logged-in') {
           ctx.log?.('[GDFlix] Reloading page to apply cookies...');
@@ -148,11 +183,17 @@ export async function ensureGdflixLogin(page, credentials, ctx = {}) {
           ctx.log?.('[GDFlix] Authenticated successfully using cookies.');
           return { loggedIn: true, method: 'cookies' };
         } else {
-          ctx.log?.('[GDFlix] Cookie login failed or session expired.');
+          ctx.log?.(
+            `[GDFlix] ❌ Cookie login did not authenticate on ${hostname}. This means the session ` +
+            `(PHPSESSID/token) itself isn't valid here — either it belongs to a different GDFlix account/mirror ` +
+            `backend than the one now active, or it expired. Re-export cookies while logged in on ${hostname} ` +
+            `specifically, or configure email/password login instead.`,
+          );
         }
       }
     } catch (err) {
       log.warn('GDFlix cookie injection failed', { error: String(err) });
+      ctx.log?.(`[GDFlix] Cookie injection error: ${err.message}`);
     }
   }
 
@@ -200,7 +241,8 @@ export async function resolveGdflix(page, { credentials, captcha } = {}, ctx = {
   ctx.log?.('On GDFlix file page — extracting final link…');
   await page.waitForLoadState('domcontentloaded').catch(() => {});
 
-  if (credentials) await ensureGdflixLogin(page, credentials, ctx);
+  let loginResult = { loggedIn: false, skipped: true };
+  if (credentials) loginResult = await ensureGdflixLogin(page, credentials, ctx);
 
   // Solve any captcha guarding the file page.
   if (captcha) {
@@ -245,8 +287,40 @@ export async function resolveGdflix(page, { credentials, captcha } = {}, ctx = {
     if (found) return found;
   }
 
+  // 3) Nothing found. If this is specifically because the file is gated behind
+  // a GDFlix account login and we couldn't establish one, say so clearly and
+  // stop — retrying won't help until the credentials/cookies are fixed.
+  const loginGateText = await page
+    .evaluate(() => {
+      const a = Array.from(document.querySelectorAll('a[href]')).find((x) =>
+        /\/login(\?|$)/.test(x.getAttribute('href') || ''),
+      );
+      return a ? (a.textContent || '').trim().replace(/\s+/g, ' ') : null;
+    })
+    .catch(() => null);
+
+  if (loginGateText && !loginResult.loggedIn) {
+    const hostname = new URL(page.url()).hostname;
+    const reason = credentials?.cookies
+      ? `the configured cookies did not authenticate on ${hostname} (see the cookie log lines above — likely a different mirror/account or an expired session)`
+      : credentials?.email
+        ? `credential (email/password) login failed on ${hostname}`
+        : `no GDFlix login is configured (set cookies or email/password in Settings → GDFlix)`;
+    ctx.log?.(`[GDFlix] ❌ Blocked by login gate: "${loginGateText}" — ${reason}.`);
+    throw terminalError(
+      `GDFlix login required ("${loginGateText}") on ${hostname} — ${reason}.`,
+    );
+  }
+
   log.warn('Could not extract a final link from GDFlix page', { url: page.url() });
   return null;
+}
+
+/** Marks an error as unrecoverable-by-retry so callers stop looping and fail the job immediately. */
+function terminalError(message) {
+  const err = new Error(message);
+  err.terminal = true;
+  return err;
 }
 
 async function findFinalIn(page, currentUrl) {
