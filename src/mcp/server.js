@@ -18,6 +18,8 @@
  * Planned tools (see ARCHITECTURE.md → "MCP surface"):
  *   watcher_poll()                      -> { found }
  *   list_posts({ limit })               -> PostEntry[]
+ *   search_posts({ query, limit })      -> PostEntry[]   (FTS5 over title+synopsis)
+ *   sync_backfill({ batchSize, direction, deepSync }) -> resumable backfill batch summary
  *   list_jobs({ status })               -> Job[]
  *   resolve_link({ url, provider })     -> { jobId } (async) or { finalUrl }
  *   resolve_post({ postId, providers }) -> { jobIds }
@@ -44,6 +46,29 @@ export function buildTools(app) {
       description: 'List recently seen posts with their parsed download options.',
       inputSchema: { type: 'object', properties: { limit: { type: 'number' } } },
       handler: async ({ limit = 20 }) => app.store.listPosts().slice(0, limit),
+    },
+    {
+      name: 'search_posts',
+      description: 'Full-text search over synced post titles and synopses (SQLite FTS5). This is the payoff of the local sync archive — search the whole catalog without hitting pahe.ink.',
+      inputSchema: {
+        type: 'object',
+        required: ['query'],
+        properties: { query: { type: 'string' }, limit: { type: 'number' } },
+      },
+      handler: async ({ query, limit = 25 }) => app.store.searchPosts(query, { limit }),
+    },
+    {
+      name: 'sync_backfill',
+      description: 'Process one resumable batch of the historical backfill (pages of older/newer posts synced into local SQLite storage). Each call continues from where the last one left off — call repeatedly to walk the whole catalog.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          batchSize: { type: 'number' },
+          direction: { type: 'string', enum: ['older', 'newer'] },
+          deepSync: { type: 'boolean' },
+        },
+      },
+      handler: async ({ batchSize, direction, deepSync }) => app.watcher.runBackfill({ batchSize, direction, deepSync }),
     },
     {
       name: 'list_jobs',

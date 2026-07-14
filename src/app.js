@@ -23,7 +23,7 @@ export async function createApp() {
   setLevel(frozenConfig.logging.level);
   const runtime = structuredClone(frozenConfig);
 
-  const store = new Store(runtime.store.path);
+  const store = new Store({ sqlitePath: runtime.store.sqlitePath, jsonPath: runtime.store.path });
 
   // Re-apply any persisted runtime overrides from a previous session.
   const overrides = store.getMeta('configOverrides', null);
@@ -104,6 +104,7 @@ export async function createApp() {
       watcher.stop();
       await bypass.close().catch(() => {});
       store.flushNow();
+      store.close();
     },
   };
 

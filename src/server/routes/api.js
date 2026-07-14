@@ -1,6 +1,6 @@
 import express from 'express';
 import { bus } from '../../core/eventBus.js';
-import { selectOptions, checkIsSeries, parseDownloadOptions, parsePostMetadata } from '../../parser/postParser.js';
+import { selectOptions, checkIsSeries } from '../../parser/postParser.js';
 
 /**
  * REST API. Receives the wired application context (`app`) and exposes control
@@ -25,13 +25,21 @@ export function createApiRouter(app) {
       queue: { ...queue.stats(), paused: queue.paused, concurrency: queue.concurrency },
       bypass: { browserMode: runtime.bypass.browserMode, captcha: runtime.bypass.captcha.provider },
       sheets: { configured: sheets.enabled, sheetId: runtime.sheets.sheetId, tab: runtime.sheets.tab },
-      counts: { posts: store.listPosts().length, jobs: store.listJobs().length },
+      sync: watcher.getBackfillStatus(),
+      counts: { posts: store.countPosts(), jobs: store.countJobs() },
     });
   });
 
   // ── posts ──
   router.get('/posts', (req, res) => {
     res.json(store.listPosts());
+  });
+
+  router.get('/posts/search', (req, res) => {
+    const q = req.query.q;
+    if (!q || !String(q).trim()) return res.status(400).json({ error: 'q required' });
+    const limit = parseInt(req.query.limit, 10) || 25;
+    res.json(store.searchPosts(String(q), { limit }));
   });
 
   router.get('/posts/:id', (req, res) => {
@@ -42,21 +50,18 @@ export function createApiRouter(app) {
 
   // Enqueue resolution jobs for a post's matching options.
   router.post('/posts/:id/resolve', async (req, res) => {
-    const post = store.getPost(req.params.id);
+    let post = store.getPost(req.params.id);
     if (!post) return res.status(404).json({ error: 'not found' });
 
-    // Lazy load options if empty (e.g. from historical crawl)
+    // Lazy deep-sync if this post was only ever listing-synced (e.g. from backfill).
     if (!post.options || post.options.length === 0) {
       try {
-        const full = await watcher.client.getPost(post.id);
-        post.options = parseDownloadOptions(full.contentHtml);
-        store.markPost(post);
-        bus.emit('post:new', post); // update GUI options view
+        post = await watcher.syncEngine.deepSyncPost(post.id);
       } catch (err) {
         return res.status(500).json({ error: `Failed to fetch post download links: ${err.message}` });
       }
     }
-    
+
     const providers = req.body?.providers || runtime.watcher.preferredProviders;
     const qualities = req.body?.qualities || runtime.watcher.preferredQualities;
     const codecs = runtime.watcher.preferredCodecs || ['x265', 'x264'];
@@ -86,69 +91,40 @@ export function createApiRouter(app) {
     res.json({ enqueued: jobs.length, jobs });
   });
 
-  // Crawl previous pages of posts (lazy loads details on-demand)
-  router.post('/watcher/crawl', async (req, res) => {
-    const maxPages = parseInt(req.body?.maxPages || 5, 10) || 5;
-    const results = [];
-    
+  // ── sync (resumable historical backfill + deep-sync sweep) ──
+  router.post('/sync/backfill/run', async (req, res) => {
     try {
-      for (let page = 1; page <= maxPages; page++) {
-        // Emit WebSocket progress event
-        bus.emit('crawl:progress', { page, maxPages, status: 'running' });
-        
-        const posts = await watcher.client.getPostsPage(page, 10);
-        if (posts.length === 0) break;
-
-        for (const post of posts) {
-          const existing = store.getPost(post.id);
-          
-          let options = existing?.options || [];
-          let poster = existing?.poster || '';
-          let rating = existing?.rating || '';
-          let synopsis = existing?.synopsis || '';
-          let isSeries = existing?.isSeries ?? false;
-
-          // Fetch full content if it is missing metadata
-          if (!existing || !existing.synopsis || !existing.poster || !existing.options || existing.options.length === 0) {
-            try {
-              const full = await watcher.client.getPost(post.id);
-              options = parseDownloadOptions(full.contentHtml);
-              const meta = parsePostMetadata(full.contentHtml);
-              poster = meta.poster;
-              rating = meta.rating;
-              synopsis = meta.synopsis;
-              isSeries = checkIsSeries(post.title, options);
-            } catch (err) {
-              log.warn(`Crawl: Failed to fetch/parse details for post ${post.id}`, { error: String(err) });
-            }
-          }
-
-          const entry = {
-            id: post.id,
-            title: post.title,
-            link: post.link,
-            date: post.date,
-            seenAt: existing?.seenAt || new Date().toISOString(),
-            options,
-            poster,
-            rating,
-            synopsis,
-            isSeries,
-            pageFound: page
-          };
-          
-          store.markPost(entry);
-          bus.emit('post:new', entry); // render in posts list
-          results.push(entry);
-        }
-      }
-      
-      bus.emit('crawl:progress', { status: 'done', resultsCount: results.length });
-      res.json({ results });
+      const { batchSize, direction, deepSync } = req.body || {};
+      const result = await watcher.runBackfill({ batchSize, direction, deepSync });
+      res.json(result);
     } catch (err) {
-      bus.emit('crawl:progress', { status: 'error', error: err.message });
       res.status(500).json({ error: err.message });
     }
+  });
+  router.get('/sync/backfill/status', (req, res) => {
+    res.json(watcher.getBackfillStatus());
+  });
+  router.post('/sync/backfill/reset', (req, res) => {
+    const { page, direction } = req.body || {};
+    res.json(watcher.resetBackfill({ page, direction }));
+  });
+  router.post('/sync/backfill/pause', (req, res) => {
+    res.json(watcher.setBackfillPaused(true));
+  });
+  router.post('/sync/backfill/resume', (req, res) => {
+    res.json(watcher.setBackfillPaused(false));
+  });
+  router.post('/sync/deep-sync/run', async (req, res) => {
+    try {
+      const { batchSize } = req.body || {};
+      const result = await watcher.runDeepSyncSweep({ batchSize });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  router.get('/sync/deep-sync/status', (req, res) => {
+    res.json({ pending: store.countUnsyncedPosts() });
   });
 
   // ── jobs ──

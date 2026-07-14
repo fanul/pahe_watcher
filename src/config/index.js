@@ -101,8 +101,17 @@ export function loadConfig() {
       sheetId: envStr('GOOGLE_SHEET_ID', d.sheets.sheetId),
       tab: envStr('GOOGLE_SHEET_TAB', d.sheets.tab),
     },
+    sync: {
+      backfillBatchSize: envInt('SYNC_BACKFILL_BATCH_SIZE', d.sync.backfillBatchSize),
+      backfillDirection: envStr('SYNC_BACKFILL_DIRECTION', d.sync.backfillDirection),
+      backfillDeepSync: envStr('SYNC_BACKFILL_DEEP_SYNC', String(d.sync.backfillDeepSync)) !== 'false',
+      backfillAutoRun: envStr('SYNC_BACKFILL_AUTO_RUN', String(d.sync.backfillAutoRun)) === 'true',
+      backfillIntervalSeconds: envInt('SYNC_BACKFILL_INTERVAL_SECONDS', d.sync.backfillIntervalSeconds),
+      deepSyncSweepBatchSize: envInt('SYNC_DEEPSYNC_SWEEP_BATCH_SIZE', d.sync.deepSyncSweepBatchSize),
+    },
     store: {
       path: path.resolve(ROOT, envStr('STATE_PATH', d.store.path)),
+      sqlitePath: path.resolve(ROOT, envStr('SQLITE_PATH', d.store.sqlitePath)),
     },
     logging: {
       level: envStr('LOG_LEVEL', d.logging.level),

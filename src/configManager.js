@@ -17,6 +17,11 @@ import {
   mergeSheetsOverrides,
   handleSheetsKeyFile
 } from './config/sheets.js';
+import {
+  getPublicSyncConfig,
+  applySyncOverrides,
+  mergeSyncOverrides
+} from './config/sync.js';
 
 const log = createLogger('app:config');
 
@@ -25,6 +30,7 @@ export function getPublicConfig(runtime, sheets) {
     watcher: getPublicWatcherConfig(runtime),
     bypass: getPublicBypassConfig(runtime),
     sheets: getPublicSheetsConfig(runtime, sheets),
+    sync: getPublicSyncConfig(runtime),
   };
 }
 
@@ -78,6 +84,12 @@ export async function updateConfig(runtime, store, sheets, bypass, watcher, patc
     watcher.stop();
     watcher.start();
   }
+
+  // Re-arm the optional backfill auto-run timer if its settings changed
+  if (patch?.sync && (patch.sync.backfillAutoRun !== undefined || patch.sync.backfillIntervalSeconds !== undefined)) {
+    watcher._armBackfillAutoRun();
+  }
+
   log.info('Runtime config updated', patch);
   return getPublicConfig(runtime, sheets);
 }
@@ -86,6 +98,7 @@ export function applyOverrides(runtime, patch) {
   applyWatcherOverrides(runtime, patch);
   applyBypassOverrides(runtime, patch);
   applySheetsOverrides(runtime, patch);
+  applySyncOverrides(runtime, patch);
   return runtime;
 }
 
@@ -94,5 +107,6 @@ export function mergeOverrides(existing, patch) {
     watcher: mergeWatcherOverrides(existing, patch),
     bypass: mergeBypassOverrides(existing, patch),
     sheets: mergeSheetsOverrides(existing, patch),
+    sync: mergeSyncOverrides(existing, patch),
   };
 }

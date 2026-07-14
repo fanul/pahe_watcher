@@ -4,7 +4,7 @@
   "description": "Automated watcher for pahe.ink: detects new movie posts, resolves ad-shortener + GDFlix chains to Google Drive links, and logs them to a Google Sheet. Controlled via a web GUI.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5.0"
   },
   "bin": {
     "pahe-watcher": "src/index.js"

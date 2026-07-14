@@ -60,8 +60,17 @@
     "sheetId": "",
     "tab": "Downloads"
   },
+  "sync": {
+    "backfillBatchSize": 5,
+    "backfillDirection": "older",
+    "backfillDeepSync": true,
+    "backfillAutoRun": false,
+    "backfillIntervalSeconds": 60,
+    "deepSyncSweepBatchSize": 20
+  },
   "store": {
-    "path": "./data/state.json"
+    "path": "./data/state.json",
+    "sqlitePath": "./data/pahe.db"
   },
   "logging": {
     "level": "info"

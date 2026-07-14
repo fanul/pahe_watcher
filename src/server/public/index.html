@@ -84,14 +84,29 @@
       <div id="panelCrawl" class="tab-content hidden">
         <div class="crawl-controls">
           <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text);">
-            Max pages:
+            Pages per batch:
             <input id="crawlMaxPages" type="number" value="5" min="1" max="100" style="width: 70px; padding: 4px 8px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text);" />
           </label>
-          <button id="btnStartCrawl" class="btn small">Start Crawl</button>
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text);">
+            Direction:
+            <select id="crawlDirection" style="padding: 4px 8px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+              <option value="older">Older</option>
+              <option value="newer">Newer</option>
+            </select>
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text);">
+            <input id="crawlDeepSync" type="checkbox" checked /> Deep sync content
+          </label>
+          <button id="btnStartCrawl" class="btn small">Run Batch</button>
+          <button id="btnResetCursor" class="btn small ghost">Reset Cursor</button>
           <span id="crawlProgress" class="muted small" style="margin-left: 8px;"></span>
         </div>
+        <div class="crawl-controls" style="margin-top: 8px;">
+          <span id="deepSyncStatus" class="muted small"></span>
+          <button id="btnDeepSyncSweep" class="btn small ghost">Deep-sync pending posts</button>
+        </div>
         <div id="crawlResults" class="list" style="margin-top: 12px;">
-          <div class="muted" style="padding: 10px 0;">No crawl results. Enter pages and click "Start Crawl".</div>
+          <div class="muted" style="padding: 10px 0;">No batches run yet. Click "Run Batch" to start syncing.</div>
         </div>
       </div>
     </section>
@@ -207,6 +222,36 @@
               <input name="stealth_useNoSandbox" type="checkbox" /> Disable Sandbox (--no-sandbox)
             </label>
           </fieldset>
+        </fieldset>
+
+        <fieldset>
+          <legend>Local Sync (Historical Backfill)</legend>
+          <label>Pages per batch
+            <input name="sync_backfillBatchSize" type="number" min="1" max="100" />
+          </label>
+          <label>Direction
+            <select name="sync_backfillDirection">
+              <option value="older">Older (walk from page 1 toward the oldest posts)</option>
+              <option value="newer">Newer (walk back toward page 1)</option>
+            </select>
+          </label>
+          <label class="row">
+            <input name="sync_backfillDeepSync" type="checkbox" /> Fetch full content (options/poster/synopsis) during backfill
+          </label>
+          <label class="row">
+            <input name="sync_backfillAutoRun" type="checkbox" /> Auto-run backfill on a timer
+          </label>
+          <label>Auto-run interval (seconds)
+            <input name="sync_backfillIntervalSeconds" type="number" min="15" />
+          </label>
+          <label>Deep-sync sweep batch size
+            <input name="sync_deepSyncSweepBatchSize" type="number" min="1" max="200" />
+          </label>
+          <div class="muted small" style="margin-top: 6px;">
+            The historical crawl tab runs one resumable batch at a time — each run picks up where the
+            last one left off (not a full one-shot crawl). Change direction/batch size here, or per-run
+            from the Historical Crawl tab.
+          </div>
         </fieldset>
 
         <fieldset>

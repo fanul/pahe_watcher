@@ -1,37 +1,90 @@
 import { $, api, esc } from './state.js';
 
+let accumulated = [];
+
 export function initCrawl(refreshAll) {
   const btnStartCrawl = $('#btnStartCrawl');
+  const btnResetCursor = $('#btnResetCursor');
+  const btnDeepSyncSweep = $('#btnDeepSyncSweep');
   const crawlProgress = $('#crawlProgress');
   const crawlResults = $('#crawlResults');
   const crawlMaxPages = $('#crawlMaxPages');
+  const crawlDirection = $('#crawlDirection');
+  const crawlDeepSync = $('#crawlDeepSync');
+  const deepSyncStatus = $('#deepSyncStatus');
+
+  refreshDeepSyncStatus();
+  refreshCursorStatus();
 
   btnStartCrawl.onclick = async () => {
     btnStartCrawl.disabled = true;
-    crawlProgress.textContent = 'Starting crawl...';
-    crawlResults.innerHTML = '<div class="muted">Crawling page 1. Please wait...</div>';
-    
+    crawlProgress.textContent = 'Running batch...';
+
     try {
-      const res = await api('/watcher/crawl', {
+      const res = await api('/sync/backfill/run', {
         method: 'POST',
-        body: JSON.stringify({ maxPages: +crawlMaxPages.value || 5 })
+        body: JSON.stringify({
+          batchSize: +crawlMaxPages.value || 5,
+          direction: crawlDirection.value,
+          deepSync: crawlDeepSync.checked,
+        }),
       });
-      renderCrawlResults(res.results);
+      accumulated = [...res.entries, ...accumulated];
+      renderCrawlResults();
+      const c = res.cursor;
+      crawlProgress.textContent = res.done
+        ? `Done — reached the end (page ${c.page}/${c.totalPages || '?'}).`
+        : `Batch complete: ${res.pagesProcessed} page(s), ${res.postsListed} listed, ${res.postsDeepSynced} deep-synced. Cursor at page ${c.page}/${c.totalPages || '?'}.`;
+      refreshDeepSyncStatus();
     } catch (err) {
-      crawlProgress.textContent = 'Crawl failed.';
-      crawlResults.innerHTML = `<div class="card" style="color:var(--red)">Crawl error: ${esc(err.message)}</div>`;
+      crawlProgress.textContent = 'Batch failed.';
+      crawlResults.innerHTML = `<div class="card" style="color:var(--red)">Sync error: ${esc(err.message)}</div>`;
     } finally {
       btnStartCrawl.disabled = false;
     }
   };
 
-  function renderCrawlResults(results) {
-    if (!results || results.length === 0) {
-      crawlResults.innerHTML = '<div class="muted">No movies found in this range.</div>';
+  btnResetCursor.onclick = async () => {
+    if (!confirm('Reset the backfill cursor to page 1?')) return;
+    await api('/sync/backfill/reset', { method: 'POST', body: JSON.stringify({ page: 1 }) });
+    accumulated = [];
+    renderCrawlResults();
+    refreshCursorStatus();
+  };
+
+  btnDeepSyncSweep.onclick = async () => {
+    btnDeepSyncSweep.disabled = true;
+    try {
+      const res = await api('/sync/deep-sync/run', { method: 'POST', body: '{}' });
+      accumulated = [...res.entries, ...accumulated];
+      renderCrawlResults();
+      deepSyncStatus.textContent = `Deep-synced ${res.processed} post(s), ${res.remaining} still pending.`;
+    } finally {
+      btnDeepSyncSweep.disabled = false;
+    }
+  };
+
+  async function refreshDeepSyncStatus() {
+    const res = await api('/sync/deep-sync/status').catch(() => null);
+    if (res) deepSyncStatus.textContent = `${res.pending} post(s) pending deep sync.`;
+  }
+
+  async function refreshCursorStatus() {
+    const cursor = await api('/sync/backfill/status').catch(() => null);
+    if (cursor) {
+      crawlMaxPages.value = crawlMaxPages.value || 5;
+      crawlDirection.value = cursor.direction || 'older';
+      crawlProgress.textContent = `Cursor: page ${cursor.page}${cursor.totalPages ? `/${cursor.totalPages}` : ''} (${cursor.direction}).`;
+    }
+  }
+
+  function renderCrawlResults() {
+    if (accumulated.length === 0) {
+      crawlResults.innerHTML = '<div class="muted" style="padding: 10px 0;">No batches run yet. Click "Run Batch" to start syncing.</div>';
       return;
     }
-    
-    crawlResults.innerHTML = results.map(r => {
+
+    crawlResults.innerHTML = accumulated.map(r => {
       const allOpts = r.options || [];
       const rows = allOpts.map((o) => {
         let codec = 'x264';
@@ -73,8 +126,7 @@ export function initCrawl(refreshAll) {
             <div class="meta">
               ${ratingHtml}
               <span>${typeLabel}</span>
-              <span>·</span>
-              <span>Found on Page ${r.pageFound}</span>
+              ${r.pageFound ? `<span>·</span><span>Found on Page ${r.pageFound}</span>` : ''}
               <span>·</span>
               <a href="${r.link}" target="_blank" rel="noopener">Origin Post ↗</a>
             </div>
@@ -96,13 +148,11 @@ export function initCrawl(refreshAll) {
 
 export function updateCrawlProgress(payload) {
   const crawlProgress = $('#crawlProgress');
-  const crawlResults = $('#crawlResults');
   if (payload.status === 'running') {
-    crawlProgress.textContent = `Crawling page ${payload.page}/${payload.maxPages}...`;
-    crawlResults.innerHTML = `<div class="muted">Crawling page ${payload.page}/${payload.maxPages}. Please wait...</div>`;
+    crawlProgress.textContent = `Syncing page ${payload.page}${payload.totalPages ? `/${payload.totalPages}` : ''}...`;
   } else if (payload.status === 'done') {
-    crawlProgress.textContent = `Crawl complete. Found ${payload.resultsCount} movies.`;
+    crawlProgress.textContent = `Reached the end of the catalog (page ${payload.page}${payload.totalPages ? `/${payload.totalPages}` : ''}).`;
   } else if (payload.status === 'error') {
-    crawlProgress.textContent = `Crawl error: ${payload.error}`;
+    crawlProgress.textContent = `Sync error: ${payload.error}`;
   }
 }

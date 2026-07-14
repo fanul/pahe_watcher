@@ -14,13 +14,18 @@ export class PaheClient {
   }
 
   async _fetchJson(url) {
+    const { json } = await this._fetchJsonWithHeaders(url);
+    return json;
+  }
+
+  async _fetchJsonWithHeaders(url) {
     const res = await fetch(url, {
       headers: { 'User-Agent': UA, Accept: 'application/json' },
     });
     if (!res.ok) {
       throw new Error(`GET ${url} -> HTTP ${res.status}`);
     }
-    return res.json();
+    return { json: await res.json(), headers: res.headers };
   }
 
   /**
@@ -59,6 +64,29 @@ export class PaheClient {
   }
 
   /**
+   * Fetch a page of posts along with WP's total post/page counts, read from
+   * the `X-WP-Total`/`X-WP-TotalPages` response headers WordPress always
+   * sends on collection endpoints. `getPostsPage` never reads these — this
+   * is what lets the sync engine know the real end of the catalog instead of
+   * inferring it purely from "an empty page came back."
+   * @returns {Promise<{posts: Array<{id,date,link,title}>, totalPosts: number|null, totalPages: number|null}>}
+   */
+  async getPostsPageMeta(page = 1, perPage = 10) {
+    const url = `${this.baseUrl}/wp-json/wp/v2/posts?page=${page}&per_page=${perPage}&_fields=id,date,link,title,categories`;
+    const { json, headers } = await this._fetchJsonWithHeaders(url);
+    const totalPosts = parseIntHeader(headers.get('x-wp-total'));
+    const totalPages = parseIntHeader(headers.get('x-wp-totalpages'));
+    const posts = json.map((p) => ({
+      id: p.id,
+      date: p.date,
+      link: p.link,
+      title: decodeEntities(p.title?.rendered || ''),
+      categories: p.categories || [],
+    }));
+    return { posts, totalPosts, totalPages };
+  }
+
+  /**
    * Fetch a single post's rendered HTML content.
    * @returns {Promise<{id,title,link,date,contentHtml}>}
    */
@@ -90,6 +118,12 @@ export function decodeEntities(s) {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .trim();
+}
+
+function parseIntHeader(v) {
+  if (v === null || v === undefined) return null;
+  const n = parseInt(v, 10);
+  return Number.isNaN(n) ? null : n;
 }
 
 export default PaheClient;

@@ -1,14 +1,14 @@
 import { createLogger } from '../core/logger.js';
-import { bus } from '../core/eventBus.js';
 import { PaheClient } from './paheClient.js';
-import { parseDownloadOptions, selectOptions, checkIsSeries, parsePostMetadata } from '../parser/postParser.js';
+import { SyncEngine } from './syncEngine.js';
 
 const log = createLogger('watcher');
 
 /**
- * Polls pahe.ink for new posts. On a new post it parses the download options,
- * persists them, emits `post:new`, and (if autoResolve) enqueues bypass jobs
- * for the preferred provider/quality combinations.
+ * Thin façade over SyncEngine: owns the poll-interval timer and the
+ * running/paused guard, and delegates the actual sync work (live poll,
+ * historical backfill, deep-sync sweep) to SyncEngine. See
+ * src/watcher/syncEngine.js and ARCHITECTURE.md.
  */
 export class Watcher {
   constructor({ config, store, queue }) {
@@ -16,7 +16,9 @@ export class Watcher {
     this.store = store;
     this.queue = queue;
     this.client = new PaheClient(config.watcher.baseUrl);
+    this.syncEngine = new SyncEngine({ config, store, client: this.client, queue });
     this.timer = null;
+    this.backfillTimer = null;
     this.running = false;
     this.paused = false;
   }
@@ -30,12 +32,32 @@ export class Watcher {
     this.timer = setInterval(() => {
       this.poll().catch((e) => log.error('Poll failed', { error: String(e) }));
     }, ms);
+    this._armBackfillAutoRun();
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this._disarmBackfillAutoRun();
     log.info('Watcher stopped');
+  }
+
+  /** (Re)arm or tear down the optional periodic backfill timer per current config. Safe to call anytime. */
+  _armBackfillAutoRun() {
+    this._disarmBackfillAutoRun();
+    if (!this.config.sync?.backfillAutoRun) return;
+    const ms = Math.max(15, this.config.sync.backfillIntervalSeconds || 60) * 1000;
+    log.info(`Backfill auto-run armed (interval ${ms / 1000}s)`);
+    this.backfillTimer = setInterval(() => {
+      const cursor = this.getBackfillStatus();
+      if (cursor.status === 'paused') return;
+      this.runBackfill().catch((e) => log.error('Auto-run backfill failed', { error: String(e) }));
+    }, ms);
+  }
+
+  _disarmBackfillAutoRun() {
+    if (this.backfillTimer) clearInterval(this.backfillTimer);
+    this.backfillTimer = null;
   }
 
   setPaused(paused) {
@@ -43,7 +65,7 @@ export class Watcher {
     log.info(`Watcher ${paused ? 'paused' : 'resumed'}`);
   }
 
-  /** One polling cycle. Safe to call manually (GUI "Check now"). */
+  /** One live-polling cycle. Safe to call manually (GUI "Check now"). */
   async poll() {
     if (this.running) {
       log.debug('Poll already in progress, skipping');
@@ -54,95 +76,37 @@ export class Watcher {
       return { paused: true };
     }
     this.running = true;
-    let found = 0;
     try {
-      const posts = await this.client.getLatestPosts(this.config.watcher.perPage);
-      // Oldest-first so IDs/highest-water-mark advance monotonically.
-      posts.sort((a, b) => (a.date > b.date ? 1 : -1));
-
-      for (const post of posts) {
-        if (this.store.hasSeenPost(post.id)) continue;
-        found += 1;
-        await this._handleNewPost(post);
-      }
-
-      this.store.setMeta('lastPollAt', new Date().toISOString());
-      bus.emit('watcher:tick', { at: new Date().toISOString(), checked: posts.length, found });
-      log.info(`Poll complete: checked ${posts.length}, new ${found}`);
+      return await this.syncEngine.runLivePoll();
     } catch (err) {
       log.error('Poll error', { error: String(err) });
       throw err;
     } finally {
       this.running = false;
     }
-    return { found };
   }
 
-  async _handleNewPost(post) {
-    log.info(`New post: ${post.title}`, { id: post.id });
-    let options = [];
-    let meta = { poster: '', rating: '', synopsis: '' };
-    try {
-      const full = await this.client.getPost(post.id);
-      options = parseDownloadOptions(full.contentHtml);
-      meta = parsePostMetadata(full.contentHtml);
-    } catch (err) {
-      log.warn('Failed to fetch/parse post content', { id: post.id, error: String(err) });
-    }
+  /** Process up to `batchSize` pages of the resumable historical backfill. */
+  runBackfill(opts) {
+    return this.syncEngine.runBackfillBatch(opts);
+  }
 
-    const isSeries = checkIsSeries(post.title, options);
+  /** Deep-sync (fetch + parse content) whichever posts are still shallow. */
+  runDeepSyncSweep(opts) {
+    return this.syncEngine.sweepDeepSync(opts);
+  }
 
-    const entry = {
-      id: post.id,
-      title: post.title,
-      link: post.link,
-      date: post.date,
-      seenAt: new Date().toISOString(),
-      options,
-      poster: meta.poster,
-      rating: meta.rating,
-      synopsis: meta.synopsis,
-      isSeries,
-    };
-    this.store.markPost(entry);
-    bus.emit('post:new', entry);
+  /** Explicit control over the backfill cursor (page/direction). */
+  resetBackfill(opts) {
+    return this.syncEngine.resetBackfillCursor(opts);
+  }
 
-    if (!this.config.watcher.autoResolve) {
-      log.info('autoResolve disabled — leaving post for manual resolution', { id: post.id });
-      return;
-    }
+  setBackfillPaused(paused) {
+    return this.syncEngine.setBackfillPaused(paused);
+  }
 
-    if (isSeries && this.config.watcher.onlyCompleteSeries && !/complete/i.test(post.title)) {
-      log.info('Skipping auto-resolve for in-progress series (does not contain "Complete" in title)', { id: post.id, title: post.title });
-      return;
-    }
-
-    const selected = selectOptions(options, {
-      providers: this.config.watcher.preferredProviders,
-      qualities: this.config.watcher.preferredQualities,
-      codecs: this.config.watcher.preferredCodecs || ['x265', 'x264'],
-      seriesType: this.config.watcher.preferredSeriesType || 'batch',
-      isSeries,
-    });
-
-    if (selected.length === 0) {
-      log.info('No matching download options to auto-resolve', { id: post.id, total: options.length });
-      return;
-    }
-
-    for (const opt of selected) {
-      this.queue.enqueue({
-        postId: post.id,
-        title: post.title,
-        postLink: post.link,
-        provider: opt.provider,
-        quality: opt.quality,
-        qualityLabel: opt.qualityLabel,
-        sizeLabel: opt.sizeLabel,
-        url: opt.url,
-      });
-    }
-    log.info(`Enqueued ${selected.length} bypass job(s)`, { id: post.id });
+  getBackfillStatus() {
+    return this.syncEngine.getBackfillCursor();
   }
 }
 

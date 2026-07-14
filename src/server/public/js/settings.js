@@ -6,6 +6,7 @@ import { populateSheetsSettings, serializeSheetsSettings } from './settings/shee
 import { populateCaptchaSettings, serializeCaptchaSettings, updateGroupVisibility } from './settings/captcha.js';
 import { populateGdflixSettings, serializeGdflixSettings, initGdflixSettings } from './settings/gdflix.js';
 import { populateGoogleSettings, serializeGoogleSettings } from './settings/google.js';
+import { populateSyncSettings, serializeSyncSettings } from './settings/sync.js';
 
 export function initSettings(refreshAll) {
   const providerSelect = $('#captchaProviderSelect');
@@ -24,6 +25,7 @@ export function initSettings(refreshAll) {
     populateCaptchaSettings(f, cfg);
     populateGdflixSettings(f, cfg);
     populateGoogleSettings(f, cfg);
+    populateSyncSettings(f, cfg);
 
     $('#sheetInfo').textContent = cfg.sheets.configured ? `${cfg.sheets.sheetId} / ${cfg.sheets.tab}` : 'not configured';
     $('#settingsDialog').showModal();
@@ -41,7 +43,8 @@ export function initSettings(refreshAll) {
         gdflix: serializeGdflixSettings(f),
         google: serializeGoogleSettings(f)
       },
-      sheets: serializeSheetsSettings(f)
+      sheets: serializeSheetsSettings(f),
+      sync: serializeSyncSettings(f)
     };
 
     await api('/config', { method: 'PATCH', body: JSON.stringify(patch) });
