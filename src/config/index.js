@@ -92,6 +92,9 @@ export function loadConfig() {
         password: envStr('GDFLIX_PASSWORD', d.bypass.gdflix.password),
         cookies: envStr('GDFLIX_COOKIES', d.bypass.gdflix.cookies),
       },
+      google: {
+        cookies: envStr('GOOGLE_DRIVE_COOKIES', d.bypass.google?.cookies || ''),
+      },
     },
     sheets: {
       serviceAccountKey: path.resolve(ROOT, envStr('GOOGLE_SERVICE_ACCOUNT_KEY', d.sheets.serviceAccountKey)),

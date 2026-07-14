@@ -2,6 +2,7 @@ import { createLogger } from '../core/logger.js';
 import { BrowserManager } from './browser.js';
 import { createCaptchaSolver, detectCaptcha } from './captcha/index.js';
 import { isGdflixUrl, resolveGdflix, classifyFinalLink } from './resolvers/gdflix.js';
+import { isGoogleAuthHost, ensureGoogleLogin } from './resolvers/googleDrive.js';
 
 const log = createLogger('bypass');
 
@@ -134,6 +135,7 @@ export class BypassEngine {
   async _driveToFinal(activePages, ctx, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     let handledGdflix = false;
+    let handledGoogleAuth = false;
 
     const WHITELIST_DOMAINS = this.config?.bypass?.tabPruningWhitelist || [
       'pahe.plus', 'old.pahe.plus', 'ouo.io', 'ouo.press', 'gdflix', 'drive.google', 
@@ -178,8 +180,31 @@ export class BypassEngine {
           }
         }
 
+        // Google sign-in wall reached mid-chain (e.g. a restricted-access Drive
+        // link redirected here before the final drive.google.com URL). Inject
+        // configured Google cookies so navigation can continue; no-ops quickly
+        // if no cookies are configured. Guarded so we don't reload every
+        // second if it doesn't resolve — one attempt per page landing here.
+        if (isGoogleAuthHost(url) && !handledGoogleAuth) {
+          handledGoogleAuth = true;
+          await ensureGoogleLogin(p, this.config.bypass.google, ctx).catch((err) => {
+            ctx.log?.(`Google login error: ${err.message}`);
+          });
+        }
+
         // Reached a final host directly.
         if (FINAL_HOST_RE.test(url)) {
+          if (classifyFinalLink(url) === 'google-drive') {
+            // Some Drive pages show an inline "Sign in" prompt rather than
+            // redirecting to accounts.google.com — check here too. Cheap
+            // no-op for the common public "anyone with the link" case.
+            await ensureGoogleLogin(p, this.config.bypass.google, ctx).catch((err) => {
+              ctx.log?.(`Google login error: ${err.message}`);
+            });
+            // Cookie injection may have reloaded/redirected the page.
+            const settledUrl = p.url();
+            return { finalUrl: settledUrl, linkType: classifyFinalLink(settledUrl) };
+          }
           return { finalUrl: url, linkType: classifyFinalLink(url) };
         }
 
