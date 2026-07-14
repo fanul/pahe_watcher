@@ -50,6 +50,9 @@
       "email": "",
       "password": "",
       "cookies": ""
+    },
+    "google": {
+      "cookies": ""
     }
   },
   "sheets": {

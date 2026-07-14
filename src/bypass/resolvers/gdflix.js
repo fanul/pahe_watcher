@@ -1,4 +1,5 @@
 import { createLogger } from '../../core/logger.js';
+import { extractCookieSourceDomains, parseCookieString } from '../cookieUtils.js';
 
 const log = createLogger('resolver:gdflix');
 
@@ -50,82 +51,6 @@ export function classifyFinalLink(url) {
   if (/pixeldrain|pixeldra\.in/.test(url)) return 'pixeldrain';
   if (/workers\.dev|\.r2\./.test(url)) return 'worker-proxy';
   return 'direct';
-}
-
-/** Best-effort peek at which domain(s) a JSON cookie export was recorded for, for logging only. */
-function extractCookieSourceDomains(cookieStr) {
-  if (!cookieStr || !cookieStr.trim().startsWith('[')) return [];
-  try {
-    const parsed = JSON.parse(cookieStr);
-    if (!Array.isArray(parsed)) return [];
-    return [...new Set(parsed.map((c) => c.domain).filter(Boolean))];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * GDFlix operates many interchangeable mirror domains (gdflix.app, gdflix.io,
- * gdflix.co, gdflix.dad, new2.gdflix.app, ...). Cookies exported from one
- * mirror carry that mirror's own `domain` field, but the browser may resolve
- * to a *different* mirror by the time it reaches the file page. A cookie's
- * domain is enforced by the browser itself — a cookie scoped to `gdflix.app`
- * is never sent on a request to `gdflix.io`, silently, with no error.
- *
- * So we always remap to whatever mirror is actually active (dot-prefixed base
- * domain, so it also covers subdomains like new2./www.), ignoring the
- * cookie's own recorded domain. This is a deliberate override, not a bug.
- */
-function parseCookieString(cookieStr, domain) {
-  if (!cookieStr) return [];
-  // If it's JSON array, parse directly
-  if (cookieStr.trim().startsWith('[')) {
-    try {
-      const parsed = JSON.parse(cookieStr);
-      if (Array.isArray(parsed)) {
-        return parsed.map((c) => {
-          let sameSite = c.sameSite;
-          if (!sameSite || sameSite.toLowerCase() === 'unspecified') {
-            sameSite = 'Lax';
-          } else {
-            sameSite = sameSite.charAt(0).toUpperCase() + sameSite.slice(1).toLowerCase();
-            if (!['Lax', 'Strict', 'None'].includes(sameSite)) {
-              sameSite = 'Lax';
-            }
-          }
-          return {
-            name: c.name,
-            value: c.value,
-            domain, // always remap — see comment above; never trust c.domain
-            path: c.path || '/',
-            secure: c.secure ?? true,
-            httpOnly: c.httpOnly ?? false,
-            sameSite: sameSite,
-          };
-        });
-      }
-    } catch {}
-  }
-
-  // Semicolon separated string
-  return cookieStr
-    .split(';')
-    .map((pair) => {
-      const parts = pair.split('=');
-      const name = parts[0]?.trim();
-      const value = parts.slice(1).join('=')?.trim();
-      if (!name || !value) return null;
-      return {
-        name,
-        value,
-        domain: domain.startsWith('.') ? domain : `.${domain}`,
-        path: '/',
-        secure: true,
-        httpOnly: false,
-        sameSite: 'Lax',
-      };
-    })
-    .filter(Boolean);
 }
 
 /**

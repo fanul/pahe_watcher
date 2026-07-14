@@ -5,6 +5,7 @@ import { populateBypassSettings, serializeBypassSettings } from './settings/bypa
 import { populateSheetsSettings, serializeSheetsSettings } from './settings/sheets.js';
 import { populateCaptchaSettings, serializeCaptchaSettings, updateGroupVisibility } from './settings/captcha.js';
 import { populateGdflixSettings, serializeGdflixSettings, initGdflixSettings } from './settings/gdflix.js';
+import { populateGoogleSettings, serializeGoogleSettings } from './settings/google.js';
 
 export function initSettings(refreshAll) {
   const providerSelect = $('#captchaProviderSelect');
@@ -22,6 +23,7 @@ export function initSettings(refreshAll) {
     populateSheetsSettings(f, cfg);
     populateCaptchaSettings(f, cfg);
     populateGdflixSettings(f, cfg);
+    populateGoogleSettings(f, cfg);
 
     $('#sheetInfo').textContent = cfg.sheets.configured ? `${cfg.sheets.sheetId} / ${cfg.sheets.tab}` : 'not configured';
     $('#settingsDialog').showModal();
@@ -36,7 +38,8 @@ export function initSettings(refreshAll) {
       bypass: {
         ...serializeBypassSettings(f),
         captcha: serializeCaptchaSettings(f),
-        gdflix: serializeGdflixSettings(f)
+        gdflix: serializeGdflixSettings(f),
+        google: serializeGoogleSettings(f)
       },
       sheets: serializeSheetsSettings(f)
     };

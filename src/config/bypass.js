@@ -12,6 +12,7 @@ export function getPublicBypassConfig(runtime) {
     gdflixEmail: runtime.bypass.gdflix.email,
     gdflixPassword: runtime.bypass.gdflix.password,
     gdflixCookies: runtime.bypass.gdflix.cookies,
+    googleCookies: runtime.bypass.google?.cookies || '',
     stealth: runtime.bypass.stealth,
     speedUpExclusions: runtime.bypass.speedUpExclusions,
     tabPruningWhitelist: runtime.bypass.tabPruningWhitelist,
@@ -24,10 +25,11 @@ export function getPublicBypassConfig(runtime) {
 
 export function applyBypassOverrides(runtime, patch) {
   if (patch.bypass) {
-    const { captcha, gdflix, ...rest } = patch.bypass;
+    const { captcha, gdflix, google, ...rest } = patch.bypass;
     Object.assign(runtime.bypass, rest);
     if (captcha) Object.assign(runtime.bypass.captcha, captcha);
     if (gdflix) Object.assign(runtime.bypass.gdflix, gdflix);
+    if (google) Object.assign(runtime.bypass.google, google);
   }
 }
 
@@ -38,6 +40,7 @@ export function mergeBypassOverrides(existing, patch) {
     ...existingBypass,
     ...patchBypass,
     captcha: { ...(existingBypass.captcha || {}), ...(patchBypass.captcha || {}) },
-    gdflix: { ...(existingBypass.gdflix || {}), ...(patchBypass.gdflix || {}) }
+    gdflix: { ...(existingBypass.gdflix || {}), ...(patchBypass.gdflix || {}) },
+    google: { ...(existingBypass.google || {}), ...(patchBypass.google || {}) },
   };
 }

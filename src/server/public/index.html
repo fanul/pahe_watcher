@@ -259,6 +259,19 @@
             </div>
           </div>
         </fieldset>
+
+        <fieldset>
+          <legend>Google Drive Cookies</legend>
+          <label>Cookies (JSON array export or "name=value; name2=value2")
+            <textarea name="googleCookies" rows="4" placeholder="[{&quot;name&quot;:&quot;SID&quot;,&quot;value&quot;:&quot;...&quot;,...}]  or  SID=...; HSID=...; SSID=..."></textarea>
+          </label>
+          <div class="muted small" style="margin-top: 6px;">
+            Most "anyone with the link" Drive files need no login at all — these are only used when the resolved
+            link hits a Google sign-in wall (e.g. an account-restricted file). Export cookies from an
+            already-signed-in Google session and paste them here. Always remapped to <code>.google.com</code>
+            regardless of which Google subdomain they were recorded for.
+          </div>
+        </fieldset>
       </div>
 
       <menu style="margin-top: 16px;">
