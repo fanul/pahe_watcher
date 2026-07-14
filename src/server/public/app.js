@@ -33,14 +33,40 @@ async function refreshStatusOnly() {
 }
 
 // ── live log via WebSocket ──
+let currentWs = null;
 function connectWs() {
+  if (currentWs) {
+    currentWs.onmessage = null;
+    currentWs.onclose = null;
+    currentWs.onerror = null;
+    try { currentWs.close(); } catch (e) {}
+    currentWs = null;
+  }
+
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws${token ? `?token=${token}` : ''}`);
+  currentWs = ws;
+
   ws.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     handleEvent(m.type, m.payload);
   };
-  ws.onclose = () => setTimeout(connectWs, 2000);
+
+  ws.onclose = () => {
+    ws.onmessage = null;
+    ws.onclose = null;
+    ws.onerror = null;
+    if (currentWs === ws) currentWs = null;
+    setTimeout(connectWs, 2000);
+  };
+
+  ws.onerror = () => {
+    ws.onmessage = null;
+    ws.onclose = null;
+    ws.onerror = null;
+    if (currentWs === ws) currentWs = null;
+    try { ws.close(); } catch (e) {}
+  };
 }
 
 let logBuffer = [];
