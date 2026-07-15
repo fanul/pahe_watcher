@@ -79,7 +79,7 @@ export class SyncEngine {
     let full;
     try {
       full = await this.client.getPost(postId);
-      options = parseDownloadOptions(full.contentHtml);
+      options = parseDownloadOptions(full.contentHtml, full.title);
       meta = parsePostMetadata(full.contentHtml);
     } catch (err) {
       log.error(`Failed to deep-sync post "${titleLabel}"`, { id: postId, error: String(err) });

@@ -275,6 +275,111 @@ test('parseDownloadOptions detects quality/codec/size from a plain-text line wit
   assert.equal(opts[1].sizeLabel, '2.31 GB');
 });
 
+test('QUALITY_RE recognizes the rarer 540p/1440p resolution tokens (real markup: "Jurassic World (2015)")', () => {
+  const html = `
+    <div class="box download"><div class="box-inner-block">
+      <b>BluRay 480p x264</b> 450 MB<br />
+      <a href="https://teknoasian.com/?ht=a">GD</a>
+    </div></div>
+    <div class="box download"><div class="box-inner-block">
+      <b>BluRay 540p x265 HEVC</b> 726 MB<br />
+      <a href="https://teknoasian.com/?ht=b">GD</a>
+    </div></div>
+    <div class="box download"><div class="box-inner-block">
+      <b>WEB-DL 1440p x265 HDR DD5.1</b> 3.1 GB<br />
+      <a href="https://teknoasian.com/?ht=c">GD</a>
+    </div></div>
+  `;
+  const opts = parseDownloadOptions(html);
+  assert.equal(opts.length, 3);
+  assert.equal(opts[0].quality, '480p');
+  assert.equal(opts[1].quality, '540p');
+  assert.equal(opts[2].quality, '1440p');
+});
+
+// Real markup: pahe.ink's SD/HD-tab layout puts the quality in its own
+// colored <span> (not <b>), separate from the "| N Eps" episode count and the
+// later "<b>Batch</b> SIZE" sub-heading that carries the actual size.
+const STANDALONE_SPAN_QUALITY_SAMPLE = `
+  <div class="box download"><div class="box-inner-block">
+    <span style="color: #00ccff;">480p</span> | 10 Eps<br />
+    <b>Batch</b> 1.58 GB<br />
+    <a href="https://teknoasian.com/?ht=sd">GD</a>
+  </div></div>
+  <div class="box download"><div class="box-inner-block">
+    <span style="color: #00ccff;">720p</span> | 10 Eps<br />
+    <b>Batch</b> 3.47 GB<br />
+    <a href="https://teknoasian.com/?ht=hd">GD</a>
+  </div></div>
+`;
+
+test('parseDownloadOptions detects a quality token that stands alone in its own <span> (SD/HD tab layout)', () => {
+  const opts = parseDownloadOptions(STANDALONE_SPAN_QUALITY_SAMPLE);
+  assert.equal(opts.length, 2);
+  assert.equal(opts[0].quality, '480p');
+  assert.equal(opts[0].sizeLabel, '1.58 GB');
+  assert.equal(opts[1].quality, '720p');
+  assert.equal(opts[1].sizeLabel, '3.47 GB');
+});
+
+test('parseDownloadOptions does not mistake the "Source ....: 1080p ..." tech-spec line for a standalone quality span', () => {
+  const html = `
+    <p>Source .........: 1080p AMZN WEB-DL DD+ 2.0 H.264-playWEB<br /></p>
+    <div class="box download"><div class="box-inner-block">
+      <b>Per Episode</b> 300 MB<br />
+      <a href="https://teknoasian.com/?ht=x">GD</a>
+    </div></div>
+  `;
+  const opts = parseDownloadOptions(html);
+  assert.equal(opts.length, 1);
+  assert.equal(opts[0].quality, null); // no postTitle passed — nothing to fall back to
+});
+
+// Real markup: single-quality releases (e.g. "Quicksand Season 1 Complete NF
+// WEB-DL 720p") sometimes never restate the resolution anywhere inside the
+// download box at all — just "<b>Per Episode</b> SIZE"/"<b>Batch</b> SIZE"
+// with no heading. pahe.ink states it once, in the title, and that's it.
+const TITLE_ONLY_QUALITY_SAMPLE = `
+  <div class="box download"><div class="box-inner-block">
+    <b>Per Episode</b> 300-350 MB<br />
+    <a href="https://teknoasian.com/?ht=a">1D</a>
+  </div></div>
+  <div class="box download"><div class="box-inner-block">
+    <b>Batch</b> 1.95 GB (6 Eps)<br />
+    <a href="https://teknoasian.com/?ht=b">UTB</a>
+  </div></div>
+`;
+
+test('parseDownloadOptions falls back to the post title\'s quality when the download box never states one and the title is unambiguous', () => {
+  const opts = parseDownloadOptions(TITLE_ONLY_QUALITY_SAMPLE, 'Quicksand Season 1 Complete NF WEB-DL 720p');
+  assert.equal(opts.length, 2);
+  assert.equal(opts[0].quality, '720p');
+  assert.equal(opts[1].quality, '720p');
+});
+
+test('the title fallback does not fire without a title, and does not guess when the title names more than one quality', () => {
+  const noTitle = parseDownloadOptions(TITLE_ONLY_QUALITY_SAMPLE);
+  assert.equal(noTitle[0].quality, null);
+
+  const ambiguousTitle = parseDownloadOptions(TITLE_ONLY_QUALITY_SAMPLE, 'Some Show Season 1 Complete BluRay 480p, 720p & 1080p');
+  assert.equal(ambiguousTitle[0].quality, null);
+  assert.equal(ambiguousTitle[1].quality, null);
+});
+
+test('the title fallback never overwrites a quality this pass already resolved correctly', () => {
+  const html = `
+    <div class="box download"><div class="box-inner-block">
+      <b>480p x264</b> 400 MB<br />
+      <a href="https://teknoasian.com/?ht=a">GD</a>
+    </div></div>
+  `;
+  // A misleading title naming a *different* quality than the one already
+  // correctly parsed — the fallback only ever fills genuinely null options,
+  // so this must be left untouched.
+  const opts = parseDownloadOptions(html, 'Some Movie (2020) BluRay 720p');
+  assert.equal(opts[0].quality, '480p');
+});
+
 test('parseDownloadOptions handles a per-episode size range ("350-500 MB")', () => {
   const html = `
     <div class="box download"><div class="box-inner-block">

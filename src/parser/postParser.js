@@ -24,7 +24,11 @@ export const PROVIDER_NAMES = {
   TB: 'TeraBox',
 };
 
-const QUALITY_RE = /(2160p|1080p|720p|480p)/i;
+// Single source of truth for recognized resolution tokens — reused by every
+// quality-heading regex below so adding a new resolution (e.g. a rarer one
+// like 540p/1440p) only needs to happen in one place.
+const QUALITY_TOKEN_SRC = '2160p|1440p|1080p|720p|540p|480p';
+const QUALITY_RE = new RegExp(`(${QUALITY_TOKEN_SRC})`, 'i');
 const CODEC_RE = /(x264|x265|hevc|10bit|av1|dd\+?5\.1|blu-?ray|web-?dl)/i;
 
 function hostOf(url) {
@@ -72,7 +76,7 @@ const SIZE_RE_SRC = '[\\d.]+(?:\\s*-\\s*[\\d.]+)?\\s?(?:GB|MB)';
 // trailing "| SIZE" to distinguish a real heading from incidental mentions
 // of a resolution elsewhere in the post (e.g. the "Source ....: 1080p ..."
 // line in the technical-spec block, which never has a pipe+size after it).
-const PLAIN_LABEL_RE = new RegExp(`^(.*?(?:2160p|1080p|720p|480p)[^|]*?)\\s*\\|\\s*(${SIZE_RE_SRC})`, 'i');
+const PLAIN_LABEL_RE = new RegExp(`^(.*?(?:${QUALITY_TOKEN_SRC})[^|]*?)\\s*\\|\\s*(${SIZE_RE_SRC})`, 'i');
 
 // Same plain-text heading, but with no "|" separator at all — e.g.
 // "480p x264 400 MB<br />" (quality, codec, and size run together as one
@@ -80,7 +84,17 @@ const PLAIN_LABEL_RE = new RegExp(`^(.*?(?:2160p|1080p|720p|480p)[^|]*?)\\s*\\|\
 // string (unlike PLAIN_LABEL_RE) so it only matches when the size is truly
 // the last thing on the line — a tech-spec line that merely mentions a
 // resolution won't also happen to end in "NN GB/MB".
-const PLAIN_LABEL_NO_PIPE_RE = new RegExp(`^(.*?(?:2160p|1080p|720p|480p).*?)\\s+(${SIZE_RE_SRC})$`, 'i');
+const PLAIN_LABEL_NO_PIPE_RE = new RegExp(`^(.*?(?:${QUALITY_TOKEN_SRC}).*?)\\s+(${SIZE_RE_SRC})$`, 'i');
+
+// A quality token standing entirely alone on its line, optionally with a
+// known codec word — nothing else. Seen when pahe.ink puts the resolution in
+// its own inline element (e.g. a colored `<span>480p</span>`) instead of
+// `<b>`/plain text, so it flattens to a text item with no size or pipe
+// anywhere near it — the real size shows up later via its own "<b>Batch</b>
+// SIZE" (or similar) sub-heading, handled separately by BARE_SIZE_RE.
+// Anchored on both ends (unlike the other two) so a tech-spec line that
+// merely mentions a resolution amid other prose can never match.
+const STANDALONE_QUALITY_RE = new RegExp(`^(?:${QUALITY_TOKEN_SRC})(?:\\s+(?:x264|x265|hevc|10bit|10-bit))?$`, 'i');
 
 // A bare size figure with no quality token attached — e.g. the " | 750 MB"
 // text that immediately follows a bolded "<b>720p x264</b>" heading, or the
@@ -103,9 +117,12 @@ const BARE_SIZE_RE = new RegExp(`^\\|?\\s*(${SIZE_RE_SRC})\\b`, 'i');
  * only when the quality changes.
  *
  * @param {string} html
+ * @param {string} [postTitle] - Optional; used only as a last-resort quality
+ *   fallback (see the bottom of this function) for single-quality releases
+ *   whose download box never restates the resolution the title already names.
  * @returns {Array<object>}
  */
-export function parseDownloadOptions(html) {
+export function parseDownloadOptions(html, postTitle = '') {
   const $ = cheerio.load(html);
   const options = [];
   let currentLabel = null;
@@ -164,6 +181,13 @@ export function parseDownloadOptions(html) {
       }
       pendingSeasonHeading = null;
 
+      if (STANDALONE_QUALITY_RE.test(item.text)) {
+        currentLabel = item.text;
+        currentQuality = (item.text.match(QUALITY_RE) || [])[0]?.toLowerCase() || null;
+        currentSize = null;
+        continue;
+      }
+
       const bareSizeMatch = item.text.match(BARE_SIZE_RE);
       if (bareSizeMatch) currentSize = bareSizeMatch[1];
       continue;
@@ -196,7 +220,30 @@ export function parseDownloadOptions(html) {
     });
   }
 
-  return dedupe(options);
+  const deduped = dedupe(options);
+
+  // Last-resort fallback: some single-quality releases never mention the
+  // resolution anywhere inside the download box at all (just "<b>Per
+  // Episode</b> SIZE"/"<b>Batch</b> SIZE" with no heading) — pahe.ink states
+  // it once, in the post title, and doesn't bother repeating it. Only
+  // applied when the title names exactly one quality tier, so a multi-
+  // quality post (title has "480p, 720p & 1080p") can't get all its distinct
+  // tiers wrongly collapsed onto whichever one happens to still be null.
+  if (postTitle && deduped.some((o) => !o.quality)) {
+    const titleQualities = [...new Set(
+      (postTitle.match(new RegExp(QUALITY_TOKEN_SRC, 'gi')) || []).map((q) => q.toLowerCase()),
+    )];
+    if (titleQualities.length === 1) {
+      for (const o of deduped) {
+        if (!o.quality) {
+          o.quality = titleQualities[0];
+          if (!o.qualityLabel) o.qualityLabel = titleQualities[0];
+        }
+      }
+    }
+  }
+
+  return deduped;
 }
 
 function dedupe(options) {
