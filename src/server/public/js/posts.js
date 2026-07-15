@@ -232,16 +232,18 @@ export function renderPosts(state) {
     let metadataBadgeHtml = '';
     let metadataInfoHtml = '';
     if (p.metadataSourceIncomplete) {
-      metadataBadgeHtml = `<button type="button" class="metadata-badge source-incomplete" data-metadata-badge="${p.id}" title="Manually flagged: pahe.ink's own page never had this data">ℹ Source incomplete</button>`;
+      metadataBadgeHtml = `<button type="button" class="metadata-badge source-incomplete" data-metadata-badge="${p.id}" data-metadata-source="posts" title="Manually flagged: pahe.ink's own page never had this data">ℹ Source incomplete</button>`;
     } else if (!p.metadataComplete) {
-      metadataBadgeHtml = `<button type="button" class="metadata-badge incomplete" data-metadata-badge="${p.id}" title="Click to change">⚠ Incomplete metadata</button>`;
+      metadataBadgeHtml = `<button type="button" class="metadata-badge incomplete" data-metadata-badge="${p.id}" data-metadata-source="posts" title="Click to change">⚠ Incomplete metadata</button>`;
     }
     if (!p.metadataComplete) {
-      metadataInfoHtml = `<button type="button" class="metadata-info-btn" data-metadata-info="${p.id}" title="Show which fields are missing">ℹ</button>`;
+      metadataInfoHtml = `<button type="button" class="metadata-info-btn" data-metadata-info="${p.id}" data-metadata-source="posts" title="Show which fields are missing">ℹ</button>`;
     }
 
+    const hasResolvedGdLink = allOpts.some((o) => o.resolvedLinkType === 'google-drive');
+
     return `
-      <div class="card${p.hasDeadJob ? ' dead-link' : ''}${!p.metadataComplete ? ' metadata-incomplete' : ''}">
+      <div class="card${p.hasDeadJob ? ' dead-link' : ''}${!p.metadataComplete ? ' metadata-incomplete' : ''}${hasResolvedGdLink ? ' gd-resolved' : ''}">
         ${(metadataInfoHtml || metadataBadgeHtml) ? `<div class="metadata-badge-row">${metadataInfoHtml}${metadataBadgeHtml}</div>` : ''}
         <div class="card-poster">${posterHtml}</div>
         <div class="card-content">

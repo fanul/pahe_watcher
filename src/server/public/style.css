@@ -331,6 +331,15 @@ body {
   pointer-events: none;
 }
 
+/* At least one option already has a resolved Google Drive link from a
+   completed bypass job — a transparent yellow wash so it's obvious at a
+   glance this post doesn't need resolving again. Uses an inset box-shadow
+   (not `background`) so it survives .card:hover's own background override,
+   and stays compatible with .dead-link/.metadata-incomplete on the same card. */
+.card.gd-resolved {
+  box-shadow: inset 0 0 0 999px rgba(234, 179, 8, 0.10);
+}
+
 /* Metadata parsing didn't find everything required (see src/parser/metadata/) — distinct from and compatible with .dead-link, since a post can be both. */
 .card.metadata-incomplete {
   position: relative;

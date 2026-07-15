@@ -116,9 +116,16 @@ export class SyncEngine {
     };
     const isNew = !existing;
     this.store.markPost(entry);
-    bus.emit('post:new', { ...entry, isNew });
+    // Re-read from the store rather than returning `entry` as-built: this
+    // picks up fields the manual entry object doesn't know about — durable
+    // manual flags like metadataSourceIncomplete, and per-option
+    // resolvedUrl/resolvedLinkType from any already-completed bypass job —
+    // so callers (API responses, the post:new WS broadcast, Historical Crawl)
+    // see the same complete shape the main post list already does.
+    const hydrated = this.store.getPost(postId);
+    bus.emit('post:new', { ...hydrated, isNew });
     log.info(`Deep-sync complete for: "${entry.title}" (parsed ${options.length} download options).`);
-    return entry;
+    return hydrated;
   }
 
   /**

@@ -1,6 +1,21 @@
 import { $, api, esc } from './state.js';
+import { missingMetadataFields } from './posts.js';
 
 let accumulated = [];
+
+/** Find a Historical Crawl result entry by post id — used by the shared metadata-badge popover (app.js), since crawl entries live here, not in state.posts. */
+export function findAccumulatedById(id) {
+  return accumulated.find((r) => String(r.id) === String(id));
+}
+
+/** Updates a crawl entry's source-incomplete flag in place (after a confirmed /mark-source-incomplete call) and re-renders. */
+export function markAccumulatedSourceIncomplete(id, flag) {
+  const entry = findAccumulatedById(id);
+  if (entry) {
+    entry.metadataSourceIncomplete = flag;
+    renderCrawlResults();
+  }
+}
 
 export function initCrawl(refreshAll) {
   const btnStartCrawl = $('#btnStartCrawl');
@@ -132,73 +147,88 @@ export function initCrawl(refreshAll) {
       crawlProgress.textContent = `Cursor: page ${cursor.page}${cursor.totalPages ? `/${cursor.totalPages}` : ''} (${cursor.direction}).`;
     }
   }
+}
 
-  function renderCrawlResults() {
-    if (accumulated.length === 0) {
-      crawlResults.innerHTML = '<div class="muted" style="padding: 10px 0;">No batches run yet. Click "Run Batch" to start syncing.</div>';
-      return;
-    }
+/** Module-scoped (not nested in initCrawl) so app.js's shared metadata-badge popover can trigger a re-render after marking/unmarking a crawl entry's source-incomplete flag. */
+export function renderCrawlResults() {
+  const crawlResults = $('#crawlResults');
+  if (accumulated.length === 0) {
+    crawlResults.innerHTML = '<div class="muted" style="padding: 10px 0;">No batches run yet. Click "Run Batch" to start syncing.</div>';
+    return;
+  }
 
-    crawlResults.innerHTML = accumulated.map(r => {
-      const allOpts = r.options || [];
-      const rows = allOpts.map((o) => {
-        let codec = 'x264';
-        if (/x265|hevc|10bit/i.test(o.qualityLabel || '')) {
-          codec = 'x265';
-        } else if (/av1/i.test(o.qualityLabel || '')) {
-          codec = 'AV1';
-        }
-        const size = o.sizeLabel || 'N/A';
-        const realIdx = allOpts.indexOf(o);
-
-        return `
-          <div class="chip-row">
-            <div class="chip-info">
-              <span class="chip-provider ${o.provider === 'GD' ? 'gd' : ''}">${o.provider}</span>
-              <span class="chip-meta">${o.season != null ? `S${o.season} · ` : ''}${o.quality || 'unknown'} · ${codec} · ${size}</span>
-            </div>
-            <button type="button" class="chip-action" data-post="${r.id}" data-idx="${realIdx}" style="background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;">Resolve ↗</button>
-          </div>
-        `;
-      }).join('');
-
-      const posterHtml = r.poster
-        ? `<img src="${r.poster}" alt="Poster" referrerpolicy="no-referrer" />`
-        : `<div class="poster-placeholder">🎬</div>`;
-
-      const ratingHtml = r.rating
-        ? `<span class="rating-badge">★ ${r.rating}</span>`
-        : '';
-
-      const isSeries = r.isSeries ?? /season|episode|web-dl\s+\[ep|s\d+e\d+|\bs\d+\b/i.test(r.title);
-      const typeLabel = isSeries ? 'TV Series' : 'Movie';
+  crawlResults.innerHTML = accumulated.map(r => {
+    const allOpts = r.options || [];
+    const hasResolvedGdLink = allOpts.some((o) => o.resolvedLinkType === 'google-drive');
+    const rows = allOpts.map((o) => {
+      let codec = 'x264';
+      if (/x265|hevc|10bit/i.test(o.qualityLabel || '')) {
+        codec = 'x265';
+      } else if (/av1/i.test(o.qualityLabel || '')) {
+        codec = 'AV1';
+      }
+      const size = o.sizeLabel || 'N/A';
+      const realIdx = allOpts.indexOf(o);
 
       return `
-        <div class="card">
-          <div class="card-poster">${posterHtml}</div>
-          <div class="card-content">
-            <div class="title" title="${esc(r.title)}">${esc(r.title)}</div>
-            <div class="meta">
-              ${ratingHtml}
-              <span>${typeLabel}</span>
-              ${r.pageFound ? `<span>·</span><span>Found on Page ${r.pageFound}</span>` : ''}
-              <span>·</span>
-              <a href="${r.link}" target="_blank" rel="noopener">Origin Post ↗</a>
-            </div>
-            <div class="synopsis" title="${esc(r.synopsis || 'No synopsis available.')}">
-              ${esc(r.synopsis || 'No synopsis available.')}
-            </div>
-            <div class="chips">
-              ${rows || '<span class="muted">No links parsed</span>'}
-            </div>
-            <div class="actions">
-              <button class="btn small" data-resolve-post="${r.id}">Resolve preferred</button>
-            </div>
+        <div class="chip-row">
+          <div class="chip-info">
+            <span class="chip-provider ${o.provider === 'GD' ? 'gd' : ''}">${o.provider}</span>
+            <span class="chip-meta">${o.season != null ? `S${o.season} · ` : ''}${o.quality || 'unknown'} · ${codec} · ${size}</span>
           </div>
+          <button type="button" class="chip-action" data-post="${r.id}" data-idx="${realIdx}" style="background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;">Resolve ↗</button>
         </div>
       `;
     }).join('');
-  }
+
+    const posterHtml = r.poster
+      ? `<img src="${r.poster}" alt="Poster" referrerpolicy="no-referrer" />`
+      : `<div class="poster-placeholder">🎬</div>`;
+
+    const ratingHtml = r.rating
+      ? `<span class="rating-badge">★ ${r.rating}</span>`
+      : '';
+
+    const isSeries = r.isSeries ?? /season|episode|web-dl\s+\[ep|s\d+e\d+|\bs\d+\b/i.test(r.title);
+    const typeLabel = isSeries ? 'TV Series' : 'Movie';
+
+    let metadataBadgeHtml = '';
+    let metadataInfoHtml = '';
+    if (r.metadataSourceIncomplete) {
+      metadataBadgeHtml = `<button type="button" class="metadata-badge source-incomplete" data-metadata-badge="${r.id}" data-metadata-source="crawl" title="Manually flagged: pahe.ink's own page never had this data">ℹ Source incomplete</button>`;
+    } else if (!r.metadataComplete) {
+      metadataBadgeHtml = `<button type="button" class="metadata-badge incomplete" data-metadata-badge="${r.id}" data-metadata-source="crawl" title="Click to change">⚠ Incomplete metadata</button>`;
+    }
+    if (!r.metadataComplete) {
+      metadataInfoHtml = `<button type="button" class="metadata-info-btn" data-metadata-info="${r.id}" data-metadata-source="crawl" title="Show which fields are missing">ℹ</button>`;
+    }
+
+    return `
+      <div class="card${hasResolvedGdLink ? ' gd-resolved' : ''}${!r.metadataComplete ? ' metadata-incomplete' : ''}">
+        ${(metadataInfoHtml || metadataBadgeHtml) ? `<div class="metadata-badge-row">${metadataInfoHtml}${metadataBadgeHtml}</div>` : ''}
+        <div class="card-poster">${posterHtml}</div>
+        <div class="card-content">
+          <div class="title" title="${esc(r.title)}">${esc(r.title)}</div>
+          <div class="meta">
+            ${ratingHtml}
+            <span>${typeLabel}</span>
+            ${r.pageFound ? `<span>·</span><span>Found on Page ${r.pageFound}</span>` : ''}
+            <span>·</span>
+            <a href="${r.link}" target="_blank" rel="noopener">Origin Post ↗</a>
+          </div>
+          <div class="synopsis" title="${esc(r.synopsis || 'No synopsis available.')}">
+            ${esc(r.synopsis || 'No synopsis available.')}
+          </div>
+          <div class="chips">
+            ${rows || '<span class="muted">No links parsed</span>'}
+          </div>
+          <div class="actions">
+            <button class="btn small" data-resolve-post="${r.id}">Resolve preferred</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 export function updateCrawlProgress(payload) {

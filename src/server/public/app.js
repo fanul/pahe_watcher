@@ -4,7 +4,7 @@ import { upsert } from './js/utils.js';
 import { renderStatus } from './js/status.js';
 import { loadPosts, renderPosts, notePostInserted, initPostFacets, markPostsWithDeadJob, markOptionReported, markPostSourceIncomplete, missingMetadataFields } from './js/posts.js';
 import { loadJobs, renderJobs, noteJobInserted, noteJobsRemoved, resetJobsCleared } from './js/jobs.js';
-import { initCrawl, updateCrawlProgress } from './js/crawl.js';
+import { initCrawl, updateCrawlProgress, findAccumulatedById, markAccumulatedSourceIncomplete } from './js/crawl.js';
 import { initSettings, applyLayoutMode } from './js/settings.js';
 import { initCaptcha, showCaptcha } from './js/captcha.js';
 import { initManualJob } from './js/manual.js';
@@ -237,30 +237,36 @@ function positionMetadataMenu(triggerEl) {
   metadataMenu.classList.remove('hidden');
 }
 
-function toggleMetadataMenu(badgeEl, postId) {
+/** Post cards render in two places (New Posts / Historical Crawl) backed by two different lists — resolve which one a given badge click belongs to. */
+function findMetadataSubject(postId, source) {
+  if (source === 'crawl') return findAccumulatedById(postId);
+  return state.posts.find((p) => String(p.id) === String(postId));
+}
+
+function toggleMetadataMenu(badgeEl, postId, source) {
   const wasOpenForThis = metadataMenu.dataset.kind === 'action' && metadataMenu.dataset.forPost === String(postId) && !metadataMenu.classList.contains('hidden');
   closeMetadataMenu();
   if (wasOpenForThis) return; // clicking the same badge again just closes it
 
-  const post = state.posts.find((p) => String(p.id) === String(postId));
+  const post = findMetadataSubject(postId, source);
   if (!post) return;
 
   metadataMenu.dataset.forPost = String(postId);
   metadataMenu.dataset.kind = 'action';
   metadataMenu.innerHTML = post.metadataSourceIncomplete
-    ? `<button type="button" class="badge-menu-item" data-unmark-source-incomplete="${postId}">Unmark — include in batch resync again</button>`
-    : `<button type="button" class="badge-menu-item" data-mark-source-incomplete="${postId}">Source has no metadata — exclude from batch resync</button>`;
+    ? `<button type="button" class="badge-menu-item" data-unmark-source-incomplete="${postId}" data-metadata-source="${source}">Unmark — include in batch resync again</button>`
+    : `<button type="button" class="badge-menu-item" data-mark-source-incomplete="${postId}" data-metadata-source="${source}">Source has no metadata — exclude from batch resync</button>`;
 
   positionMetadataMenu(badgeEl);
 }
 
 /** Read-only bubble listing exactly which required metadata fields this post is missing. */
-function toggleMetadataInfo(infoBtnEl, postId) {
+function toggleMetadataInfo(infoBtnEl, postId, source) {
   const wasOpenForThis = metadataMenu.dataset.kind === 'info' && metadataMenu.dataset.forPost === String(postId) && !metadataMenu.classList.contains('hidden');
   closeMetadataMenu();
   if (wasOpenForThis) return;
 
-  const post = state.posts.find((p) => String(p.id) === String(postId));
+  const post = findMetadataSubject(postId, source);
   if (!post) return;
 
   const missing = missingMetadataFields(post);
@@ -282,24 +288,26 @@ document.body.addEventListener('click', async (e) => {
   const t = e.target;
 
   if (t.dataset.metadataInfo) {
-    toggleMetadataInfo(t, t.dataset.metadataInfo);
+    toggleMetadataInfo(t, t.dataset.metadataInfo, t.dataset.metadataSource || 'posts');
     return;
   }
   if (t.dataset.metadataBadge) {
-    toggleMetadataMenu(t, t.dataset.metadataBadge);
+    toggleMetadataMenu(t, t.dataset.metadataBadge, t.dataset.metadataSource || 'posts');
     return;
   }
   if (t.dataset.markSourceIncomplete) {
     const id = t.dataset.markSourceIncomplete;
     await api(`/posts/${id}/mark-source-incomplete`, { method: 'POST', body: JSON.stringify({ sourceIncomplete: true }) });
-    markPostSourceIncomplete(state, Number(id), true);
+    if (t.dataset.metadataSource === 'crawl') markAccumulatedSourceIncomplete(id, true);
+    else markPostSourceIncomplete(state, Number(id), true);
     closeMetadataMenu();
     return;
   }
   if (t.dataset.unmarkSourceIncomplete) {
     const id = t.dataset.unmarkSourceIncomplete;
     await api(`/posts/${id}/mark-source-incomplete`, { method: 'POST', body: JSON.stringify({ sourceIncomplete: false }) });
-    markPostSourceIncomplete(state, Number(id), false);
+    if (t.dataset.metadataSource === 'crawl') markAccumulatedSourceIncomplete(id, false);
+    else markPostSourceIncomplete(state, Number(id), false);
     closeMetadataMenu();
     return;
   }
