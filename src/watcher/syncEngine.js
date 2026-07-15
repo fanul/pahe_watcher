@@ -54,7 +54,7 @@ export class SyncEngine {
           pageFound: direction ? page : undefined,
         };
         this.store.markPost(entry);
-        bus.emit('post:new', entry);
+        bus.emit('post:new', { ...entry, isNew: true });
       }
     });
 
@@ -105,8 +105,9 @@ export class SyncEngine {
       creator: meta.creator,
       actors: meta.actors,
     };
+    const isNew = !existing;
     this.store.markPost(entry);
-    bus.emit('post:new', entry);
+    bus.emit('post:new', { ...entry, isNew });
     log.info(`Deep-sync complete for: "${entry.title}" (parsed ${options.length} download options).`);
     return entry;
   }

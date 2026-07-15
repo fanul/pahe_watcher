@@ -125,9 +125,11 @@ function handleEvent(type, payload) {
   switch (type) {
     case 'log': appendLog(payload); break;
     case 'post:new': {
+      if (payload.isNew) {
+        notePostInserted();
+      }
       if (shouldPrependPost(payload)) {
-        const inserted = upsert(state.posts, payload, (p) => p.id);
-        if (inserted) notePostInserted();
+        upsert(state.posts, payload, (p) => p.id);
         renderPosts(state);
       }
       refreshStatusSoon();

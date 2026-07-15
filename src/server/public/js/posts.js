@@ -104,6 +104,8 @@ export async function loadPosts(state, { reset = true } = {}) {
 /** Call after a WS `post:new` inserts a genuinely new (not just updated) post, so the count/Load-more stay accurate without a re-fetch. */
 export function notePostInserted() {
   total += 1;
+  const el = $('#postCount');
+  if (el) el.textContent = `(${total})`;
 }
 
 export function renderPosts(state) {
