@@ -184,10 +184,6 @@ export function renderPosts(state) {
       const resolveText = o.resolvedUrl ? 'Re-resolve ↗' : 'Resolve ↗';
       const actionSep = o.resolvedUrl ? '<span class="muted" style="margin: 0 4px; font-size: 11px;">·</span>' : '';
 
-      const reportAction = o.deadReportedAt
-        ? `<span class="muted" style="font-size: 11px; margin-left: 6px;" title="Reported ${esc(new Date(o.deadReportedAt).toLocaleString())}">✓ Reported</span>`
-        : `<button type="button" class="chip-action" data-report-post="${p.id}" data-report-url="${esc(o.url)}" style="background: none; border: none; padding: 0; margin-left: 6px; color: var(--red, #ef4444); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;">Report ↗</button>`;
-
       return `
         <div class="chip-row">
           <div class="chip-info">
@@ -198,7 +194,6 @@ export function renderPosts(state) {
             ${openBtn}
             ${actionSep}
             <button type="button" class="chip-action" data-post="${p.id}" data-idx="${realIdx}" style="background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;">${resolveText}</button>
-            ${reportAction}
           </div>
         </div>
       `;
