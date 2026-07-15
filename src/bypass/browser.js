@@ -55,48 +55,62 @@ export class BrowserManager {
     const { chromium, name: engine } = await this._loadEngine();
     const isPatchright = engine === 'patchright';
 
-    fs.mkdirSync(this.profileDir, { recursive: true });
     const stealth = this.config?.bypass?.stealth || {};
+    const cdpUrl = this.config?.bypass?.cdpUrl;
 
-    // Which browser binary: real Chrome ("chrome") is best for Turnstile; empty
-    // string or "chromium" uses the bundled build.
-    const channelCfg = stealth.chromeChannel ?? 'chrome';
-    const channel = channelCfg && channelCfg !== 'chromium' ? channelCfg : null;
-
-    const launchOptions = {
-      headless: this.headless,
-      viewport: { width: 1366, height: 768 },
-    };
-    if (channel) launchOptions.channel = channel;
-
-    // patchright manages its own anti-detection; adding automation flags,
-    // custom UAs, or stealth init scripts can REINTRODUCE detectable patterns.
-    // So we only apply the manual hardening on the stock-playwright path.
-    if (!isPatchright) {
-      if (stealth.useStealthUserAgent !== false && this.headless) launchOptions.userAgent = UA;
-      const ignoreDefaultArgs = [];
-      const args = [];
-      if (stealth.disableAutomationFlag !== false) {
-        ignoreDefaultArgs.push('--enable-automation');
-        args.push('--disable-blink-features=AutomationControlled');
+    if (cdpUrl) {
+      log.info(`Connecting to remote browser via CDP: ${cdpUrl}`);
+      try {
+        this._remoteBrowser = await chromium.connectOverCDP(cdpUrl);
+        this.context = this._remoteBrowser.contexts()[0] || await this._remoteBrowser.newContext();
+      } catch (err) {
+        log.error(`Failed to connect to remote browser via CDP at ${cdpUrl}: ${err.message}`);
+        throw err;
       }
-      if (stealth.useNoSandbox !== false) args.push('--no-sandbox');
-      if (ignoreDefaultArgs.length) launchOptions.ignoreDefaultArgs = ignoreDefaultArgs;
-      launchOptions.args = args;
     } else {
-      // Minimal, non-fingerprintable args only.
-      launchOptions.args = stealth.useNoSandbox !== false ? ['--no-sandbox'] : [];
+      fs.mkdirSync(this.profileDir, { recursive: true });
+
+      // Which browser binary: real Chrome ("chrome") is best for Turnstile; empty
+      // string or "chromium" uses the bundled build.
+      const channelCfg = stealth.chromeChannel ?? 'chrome';
+      const channel = channelCfg && channelCfg !== 'chromium' ? channelCfg : null;
+
+      const launchOptions = {
+        headless: this.headless,
+        viewport: { width: 1366, height: 768 },
+      };
+      if (channel) launchOptions.channel = channel;
+
+      // patchright manages its own anti-detection; adding automation flags,
+      // custom UAs, or stealth init scripts can REINTRODUCE detectable patterns.
+      // So we only apply the manual hardening on the stock-playwright path.
+      if (!isPatchright) {
+        if (stealth.useStealthUserAgent !== false && this.headless) launchOptions.userAgent = UA;
+        const ignoreDefaultArgs = [];
+        const args = [];
+        if (stealth.disableAutomationFlag !== false) {
+          ignoreDefaultArgs.push('--enable-automation');
+          args.push('--disable-blink-features=AutomationControlled');
+        }
+        if (stealth.useNoSandbox !== false) args.push('--no-sandbox');
+        if (ignoreDefaultArgs.length) launchOptions.ignoreDefaultArgs = ignoreDefaultArgs;
+        launchOptions.args = args;
+      } else {
+        // Minimal, non-fingerprintable args only.
+        launchOptions.args = stealth.useNoSandbox !== false ? ['--no-sandbox'] : [];
+      }
+
+      log.info(`Launching ${engine} (${this.headless ? 'headless' : 'headful'}${channel ? `, channel=${channel}` : ''})`, {
+        profile: this.profileDir,
+      });
+
+      this.context = await this._launchWithFallback(chromium, launchOptions, channel);
     }
-
-    log.info(`Launching ${engine} (${this.headless ? 'headless' : 'headful'}${channel ? `, channel=${channel}` : ''})`, {
-      profile: this.profileDir,
-    });
-
-    this.context = await this._launchWithFallback(chromium, launchOptions, channel);
 
     this.context.on('close', () => {
       this.context = null;
-      log.info('Browser context closed (process exited)');
+      this._remoteBrowser = null;
+      log.info('Browser context closed (process exited or disconnected)');
     });
 
     // Surface [pahe-auto] page logs into the app log.
@@ -190,6 +204,11 @@ export class BrowserManager {
       await this.context.close().catch(() => {});
       this.context = null;
       log.info('Browser context closed');
+    }
+    if (this._remoteBrowser) {
+      await this._remoteBrowser.disconnect().catch(() => {});
+      this._remoteBrowser = null;
+      log.info('Disconnected from remote CDP browser');
     }
   }
 }

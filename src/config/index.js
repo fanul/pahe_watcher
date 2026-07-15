@@ -58,6 +58,7 @@ export function loadConfig() {
     },
     bypass: {
       browserMode: envStr('BROWSER_MODE', d.bypass.browserMode),
+      cdpUrl: envStr('BYPASS_CDP_URL', d.bypass.cdpUrl || ''),
       initialPageDelaySeconds: parseFloat(envStr('INITIAL_PAGE_DELAY_SECONDS', String(d.bypass.initialPageDelaySeconds))),
       concurrency: envInt('BYPASS_CONCURRENCY', d.bypass.concurrency),
       timeoutSeconds: envInt('BYPASS_TIMEOUT_SECONDS', d.bypass.timeoutSeconds),

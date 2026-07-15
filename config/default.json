@@ -17,6 +17,7 @@
   },
   "bypass": {
     "browserMode": "auto",
+    "cdpUrl": "",
     "initialPageDelaySeconds": 1.5,
     "concurrency": 1,
     "timeoutSeconds": 180,
