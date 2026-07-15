@@ -86,15 +86,18 @@ const PLAIN_LABEL_RE = new RegExp(`^(.*?(?:${QUALITY_TOKEN_SRC})[^|]*?)\\s*\\|\\
 // resolution won't also happen to end in "NN GB/MB".
 const PLAIN_LABEL_NO_PIPE_RE = new RegExp(`^(.*?(?:${QUALITY_TOKEN_SRC}).*?)\\s+(${SIZE_RE_SRC})$`, 'i');
 
-// A quality token standing entirely alone on its line, optionally with a
-// known codec word — nothing else. Seen when pahe.ink puts the resolution in
-// its own inline element (e.g. a colored `<span>480p</span>`) instead of
-// `<b>`/plain text, so it flattens to a text item with no size or pipe
-// anywhere near it — the real size shows up later via its own "<b>Batch</b>
-// SIZE" (or similar) sub-heading, handled separately by BARE_SIZE_RE.
-// Anchored on both ends (unlike the other two) so a tech-spec line that
-// merely mentions a resolution amid other prose can never match.
-const STANDALONE_QUALITY_RE = new RegExp(`^(?:${QUALITY_TOKEN_SRC})(?:\\s+(?:x264|x265|hevc|10bit|10-bit))?$`, 'i');
+// A short heading line that *starts* with a quality token and has no size
+// anywhere on it — e.g. a bare "<span>480p</span>" quality-only element
+// (nothing trailing at all), or plain text like "1080p x264 6CH" (codec plus
+// an audio-channel-count annotation pahe.ink sometimes tacks on, with no
+// pipe and no size — the real size shows up later via its own "<b>Batch</b>
+// SIZE" sub-heading, handled separately by BARE_SIZE_RE). Anchored at the
+// *start* only (unlike PLAIN_LABEL_NO_PIPE_RE, which requires a trailing
+// size) — safe because a tech-spec line mentioning a resolution always has a
+// "Label ....: " prefix before it, so it never starts with the quality token
+// itself. Capped at a short trailing run so it can't accidentally swallow an
+// unrelated, much longer sentence that happens to start with a number.
+const SHORT_QUALITY_HEADING_RE = new RegExp(`^(?:${QUALITY_TOKEN_SRC})\\b.{0,24}$`, 'i');
 
 // A bare size figure with no quality token attached — e.g. the " | 750 MB"
 // text that immediately follows a bolded "<b>720p x264</b>" heading, or the
@@ -198,7 +201,7 @@ export function parseDownloadOptions(html, postTitle = '') {
       }
       pendingSeasonHeading = null;
 
-      if (STANDALONE_QUALITY_RE.test(item.text)) {
+      if (SHORT_QUALITY_HEADING_RE.test(item.text)) {
         currentLabel = item.text;
         currentQuality = (item.text.match(QUALITY_RE) || [])[0]?.toLowerCase() || null;
         currentSize = null;

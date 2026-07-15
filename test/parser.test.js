@@ -335,6 +335,57 @@ test('parseDownloadOptions does not mistake the "Source ....: 1080p ..." tech-sp
   assert.equal(opts[0].quality, null); // no postTitle passed — nothing to fall back to
 });
 
+// Real markup from https://pahe.ink/chuck-season-1-5-complete-bluray-720p/ —
+// a second quality tier ("1080p x264 6CH") sits in its own <div class="box
+// download"> right after a "<b>Season 1</b> 720p" tier, under the same
+// season tab-pane, but has NO "<b>Season N</b>" heading of its own, NO pipe,
+// and NO size anywhere near it (the real size, if any, only shows up later
+// via its own "<b>Batch</b> SIZE" sub-heading). Regression: this used to be
+// silently unrecognized as a heading at all, so its anchors inherited the
+// *previous* tier's stale quality/label instead of forming their own group.
+const SEASON_WITH_UNHEADED_SECOND_TIER_SAMPLE = `
+  <div class="box download"><div class="box-inner-block">
+    <b>Season 1</b> 720p<br />
+    <b>Per Episode</b><br />
+    <a href="https://teknoasian.com/?ht=s1-720-pe">1D</a>
+    <b>Batch</b><br />
+    <a href="https://teknoasian.com/?ht=s1-720-batch">GD</a>
+  </div></div>
+  <div class="box download"><div class="box-inner-block">
+    1080p x264 6CH<br />
+    <b>Per Episode</b><br />
+    <a href="https://teknoasian.com/?ht=s1-1080-pe">1D</a>
+    <b>Batch</b> 11.89 GB<br />
+    <a href="https://teknoasian.com/?ht=s1-1080-batch">GD</a>
+  </div></div>
+`;
+
+test('a second quality tier with no season heading of its own gets its own group instead of inheriting the previous tier\'s stale quality', () => {
+  const opts = parseDownloadOptions(SEASON_WITH_UNHEADED_SECOND_TIER_SAMPLE);
+  assert.equal(opts.length, 4);
+
+  assert.equal(opts[0].quality, '720p');
+  assert.equal(opts[0].qualityLabel, 'Season 1 720p');
+  assert.equal(opts[0].season, 1);
+  assert.equal(opts[0].sizeLabel, null); // genuinely no size for this tier
+
+  assert.equal(opts[1].quality, '720p');
+  assert.equal(opts[1].qualityLabel, 'Season 1 720p');
+  assert.equal(opts[1].season, 1);
+
+  // The 1080p tier — must NOT still read as "720p"/the old label, and must
+  // still correctly inherit season 1 (no new season heading appeared).
+  assert.equal(opts[2].quality, '1080p');
+  assert.equal(opts[2].qualityLabel, '1080p x264 6CH');
+  assert.equal(opts[2].season, 1);
+  assert.equal(opts[2].sizeLabel, null); // Per Episode tier has no size
+
+  assert.equal(opts[3].quality, '1080p');
+  assert.equal(opts[3].qualityLabel, '1080p x264 6CH');
+  assert.equal(opts[3].season, 1);
+  assert.equal(opts[3].sizeLabel, '11.89 GB'); // Batch tier does have one
+});
+
 // Real markup: single-quality releases (e.g. "Quicksand Season 1 Complete NF
 // WEB-DL 720p") sometimes never restate the resolution anywhere inside the
 // download box at all — just "<b>Per Episode</b> SIZE"/"<b>Batch</b> SIZE"
