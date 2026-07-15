@@ -140,6 +140,25 @@ function handleEvent(type, payload) {
       const inserted = upsert(state.jobs, payload, (j) => j.id);
       if (inserted) noteJobInserted();
       renderJobs(state);
+
+      if (payload.status === 'done' && payload.result?.finalUrl) {
+        let postUpdated = false;
+        for (const post of state.posts) {
+          if (post.options) {
+            for (const opt of post.options) {
+              if (opt.url === payload.url) {
+                opt.resolvedUrl = payload.result.finalUrl;
+                opt.resolvedLinkType = payload.result.linkType;
+                postUpdated = true;
+              }
+            }
+          }
+        }
+        if (postUpdated) {
+          renderPosts(state);
+        }
+      }
+
       if (payload.status === 'dead' && payload.postLink) markPostsWithDeadJob(state, payload.postLink);
       refreshStatusSoon();
       break;
