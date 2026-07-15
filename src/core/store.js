@@ -113,15 +113,27 @@ export class Store {
       `),
       unsyncedPostIds: this.db.prepare('SELECT id FROM posts WHERE content_synced_at IS NULL ORDER BY id ASC LIMIT ?'),
       countUnsyncedPosts: this.db.prepare('SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NULL'),
-      // Excludes metadata_source_incomplete=1 rows — the user has confirmed
-      // pahe.ink's own page never had this data, so re-fetching it forever
-      // would be pointless churn.
-      missingExtendedMetadataIds: this.db.prepare(
-        "SELECT id FROM posts WHERE content_synced_at IS NOT NULL AND (metadata_complete IS NULL OR metadata_complete = 0) AND (metadata_source_incomplete IS NULL OR metadata_source_incomplete = 0) ORDER BY id ASC LIMIT ?",
-      ),
-      countMissingExtendedMetadata: this.db.prepare(
-        "SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NOT NULL AND (metadata_complete IS NULL OR metadata_complete = 0) AND (metadata_source_incomplete IS NULL OR metadata_source_incomplete = 0)",
-      ),
+      // Two independent reasons a post lands in this sweep:
+      //  1. IMDb metadata (poster/rating/synopsis/etc.) is incomplete — excludes
+      //     metadata_source_incomplete=1 rows, since the user has confirmed
+      //     pahe.ink's own page never had that data (re-fetching it forever
+      //     would be pointless churn).
+      //  2. At least one download option has no resolvable quality — always a
+      //     parser/layout gap, never a legitimate "source doesn't have it"
+      //     case (pahe.ink always shows *some* quality heading), so this one
+      //     is NOT excluded by metadata_source_incomplete.
+      missingExtendedMetadataIds: this.db.prepare(`
+        SELECT id FROM posts WHERE content_synced_at IS NOT NULL AND (
+          ((metadata_complete IS NULL OR metadata_complete = 0) AND (metadata_source_incomplete IS NULL OR metadata_source_incomplete = 0))
+          OR EXISTS (SELECT 1 FROM post_options po WHERE po.post_id = posts.id AND po.quality IS NULL)
+        ) ORDER BY id ASC LIMIT ?
+      `),
+      countMissingExtendedMetadata: this.db.prepare(`
+        SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NOT NULL AND (
+          ((metadata_complete IS NULL OR metadata_complete = 0) AND (metadata_source_incomplete IS NULL OR metadata_source_incomplete = 0))
+          OR EXISTS (SELECT 1 FROM post_options po WHERE po.post_id = posts.id AND po.quality IS NULL)
+        )
+      `),
       distinctYears: this.db.prepare('SELECT DISTINCT year FROM posts WHERE year IS NOT NULL ORDER BY year DESC'),
       distinctGenres: this.db.prepare("SELECT DISTINCT genre FROM posts WHERE genre IS NOT NULL AND genre != ''"),
       // LEFT JOIN (not INNER) so series posts with no season-tagged options

@@ -365,6 +365,33 @@ test('listPostsMissingExtendedMetadata / countPostsMissingExtendedMetadata: sync
   assert.equal(store.countPostsMissingExtendedMetadata(), 1);
 });
 
+test('listPostsMissingExtendedMetadata also catches posts with complete IMDb metadata but an unresolved option quality — never excluded by metadataSourceIncomplete', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+
+  store.markPost({
+    id: 10, title: 'Fully Complete', link: 'l10', date: 'd', synopsis: 'A synopsis',
+    poster: 'p', rating: '7.5', year: 2020, genre: 'Action', director: 'Someone', actors: 'Someone Actor',
+    metadataComplete: true,
+    options: [{ provider: 'GD', quality: '720p', url: 'u10' }],
+  });
+  store.markPost({
+    id: 11, title: 'Complete Metadata, Unparsed Quality', link: 'l11', date: 'd', synopsis: 'A synopsis',
+    poster: 'p', rating: '7.5', year: 2020, genre: 'Action', director: 'Someone', actors: 'Someone Actor',
+    metadataComplete: true,
+    options: [{ provider: 'GD', quality: null, url: 'u11' }],
+  });
+
+  assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [11]);
+  assert.equal(store.countPostsMissingExtendedMetadata(), 1);
+
+  // Marking source-incomplete only concerns the IMDb-metadata reason — a
+  // null option quality is always a parser gap, so it stays in the sweep.
+  store.markPostSourceIncomplete(11, true);
+  assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [11]);
+  assert.equal(store.countPostsMissingExtendedMetadata(), 1);
+});
+
 test('markPostSourceIncomplete excludes a post from the metadata-backfill sweep and survives a resync', (t) => {
   const { store, dir } = tmpStore();
   cleanup(t, dir, store);

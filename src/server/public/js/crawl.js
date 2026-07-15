@@ -102,7 +102,7 @@ export function initCrawl(refreshAll) {
       });
       accumulated = [...res.entries, ...accumulated];
       renderCrawlResults();
-      metadataBackfillStatus.textContent = `Resynced ${res.processed} post(s), ${res.remaining} still have incomplete metadata.`;
+      metadataBackfillStatus.textContent = `Resynced ${res.processed} post(s), ${res.remaining} still have incomplete metadata or unresolved quality.`;
     } finally {
       btnMetadataBackfillSweep.disabled = false;
     }
@@ -136,7 +136,7 @@ export function initCrawl(refreshAll) {
 
   async function refreshMetadataBackfillStatus() {
     const res = await api('/sync/metadata-backfill/status').catch(() => null);
-    if (res) metadataBackfillStatus.textContent = `${res.pending} post(s) with incomplete metadata.`;
+    if (res) metadataBackfillStatus.textContent = `${res.pending} post(s) with incomplete metadata or unresolved quality.`;
   }
 
   async function refreshCursorStatus() {
