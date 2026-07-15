@@ -138,13 +138,23 @@ export function renderPosts(state) {
       const size = o.sizeLabel || 'N/A';
       const realIdx = allOpts.indexOf(o);
 
+      const openBtn = o.resolvedUrl
+        ? `<a href="${esc(o.resolvedUrl)}" target="_blank" rel="noopener" class="chip-action-open" style="color: #34d399; font-weight: 600; font-size: 11px; text-decoration: none; display: inline-flex; align-items: center; gap: 3px;">📂 Open ↗</a>`
+        : '';
+      const resolveText = o.resolvedUrl ? 'Re-resolve ↗' : 'Resolve ↗';
+      const actionSep = o.resolvedUrl ? '<span class="muted" style="margin: 0 4px; font-size: 11px;">·</span>' : '';
+
       return `
         <div class="chip-row">
           <div class="chip-info">
             <span class="chip-provider ${o.provider === 'GD' ? 'gd' : ''}">${o.provider}</span>
             <span class="chip-meta">${o.quality || 'unknown'} · ${codec} · ${size}</span>
           </div>
-          <button type="button" class="chip-action" data-post="${p.id}" data-idx="${realIdx}" style="background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;">Resolve ↗</button>
+          <div style="display: flex; align-items: center; gap: 4px;">
+            ${openBtn}
+            ${actionSep}
+            <button type="button" class="chip-action" data-post="${p.id}" data-idx="${realIdx}" style="background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;">${resolveText}</button>
+          </div>
         </div>
       `;
     }).join('');
@@ -198,23 +208,18 @@ export function renderPosts(state) {
           <div class="actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <button class="btn small" data-resolve-post="${p.id}">Resolve preferred</button>
             ${(() => {
-              const resolvedJobs = (state.jobs || []).filter(j =>
-                j.postLink === p.link &&
-                j.status === 'done' &&
-                j.result &&
-                j.result.finalUrl
-              );
+              const resolvedOpts = (p.options || []).filter(o => o.resolvedUrl);
 
-              if (resolvedJobs.length === 1) {
-                const job = resolvedJobs[0];
+              if (resolvedOpts.length === 1) {
+                const opt = resolvedOpts[0];
                 return `
-                  <a href="${esc(job.result.finalUrl)}" target="_blank" rel="noopener" class="btn small success-btn" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; height: 28px;">
-                    📂 Open (${job.quality})
+                  <a href="${esc(opt.resolvedUrl)}" target="_blank" rel="noopener" class="btn small success-btn" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; height: 28px;">
+                    📂 Open (${opt.quality} - ${opt.provider})
                   </a>
                 `;
-              } else if (resolvedJobs.length > 1) {
-                const optionsHtml = resolvedJobs.map(j => {
-                  return `<option value="${esc(j.result.finalUrl)}">${j.quality} (${j.provider})</option>`;
+              } else if (resolvedOpts.length > 1) {
+                const optionsHtml = resolvedOpts.map(o => {
+                  return `<option value="${esc(o.resolvedUrl)}">${o.quality} (${o.provider})</option>`;
                 }).join('');
 
                 return `

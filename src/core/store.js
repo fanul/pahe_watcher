@@ -51,7 +51,13 @@ export class Store {
     this._stmt = {
       hasSeenPost: this.db.prepare('SELECT 1 FROM posts WHERE id = ?'),
       getPost: this.db.prepare('SELECT * FROM posts WHERE id = ?'),
-      getPostOptions: this.db.prepare('SELECT * FROM post_options WHERE post_id = ? ORDER BY sort_order'),
+      getPostOptions: this.db.prepare(`
+        SELECT po.*,
+          (SELECT result FROM jobs WHERE jobs.url = po.url AND jobs.status = 'done' ORDER BY created_at DESC LIMIT 1) AS job_result
+        FROM post_options po
+        WHERE po.post_id = ?
+        ORDER BY po.sort_order
+      `),
       allPosts: this.db.prepare('SELECT * FROM posts ORDER BY date DESC'),
       allPostOptions: this.db.prepare('SELECT * FROM post_options ORDER BY post_id, sort_order'),
       deletePostOptions: this.db.prepare('DELETE FROM post_options WHERE post_id = ?'),
@@ -257,7 +263,13 @@ export class Store {
     if (ids.length) {
       const placeholders = ids.map(() => '?').join(',');
       const optRows = this.db
-        .prepare(`SELECT * FROM post_options WHERE post_id IN (${placeholders}) ORDER BY post_id, sort_order`)
+        .prepare(`
+          SELECT po.*,
+            (SELECT result FROM jobs WHERE jobs.url = po.url AND jobs.status = 'done' ORDER BY created_at DESC LIMIT 1) AS job_result
+          FROM post_options po
+          WHERE po.post_id IN (${placeholders})
+          ORDER BY po.post_id, po.sort_order
+        `)
         .all(...ids);
       for (const row of optRows) {
         const list = optionsByPost.get(row.post_id) || [];
@@ -385,6 +397,15 @@ export class Store {
   }
 
   _hydrateOption(row) {
+    let resolvedUrl = null;
+    let resolvedLinkType = null;
+    if (row.job_result) {
+      try {
+        const res = JSON.parse(row.job_result);
+        resolvedUrl = res.finalUrl;
+        resolvedLinkType = res.linkType;
+      } catch (e) {}
+    }
     return {
       provider: row.provider,
       providerName: row.provider_name,
@@ -393,6 +414,8 @@ export class Store {
       sizeLabel: row.size_label,
       url: row.url,
       host: row.host,
+      resolvedUrl,
+      resolvedLinkType,
     };
   }
 
