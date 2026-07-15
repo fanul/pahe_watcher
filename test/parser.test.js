@@ -249,6 +249,32 @@ test('parseDownloadOptions does not leak a bare "Season N" heading into anchors 
   assert.equal(opts[0].quality, null);
 });
 
+// Real markup from https://pahe.ink/vampire-vs-vampire-1989-bluray-480p-720p-1080p/
+// — quality, codec, and size all run together as one plain-text line with no
+// "|" separator and no <b> wrapper at all ("480p x264 400 MB<br />").
+const NO_PIPE_PLAIN_LABEL_SAMPLE = `
+  <p>Source .........: HKG.Blu-ray.REMUX.1080p.AVC.TrueHD.5.1-DIY<br /></p>
+  <div class="box download"><div class="box-inner-block">
+    480p x264 400 MB<br />
+    <a href="https://teknoasian.com/?ht=a480">UTB</a>
+  </div></div>
+  <div class="box download"><div class="box-inner-block">
+    1080p x264 DD5.1 2.31 GB<br />
+    <a href="https://teknoasian.com/?ht=a1080">GD</a>
+  </div></div>
+`;
+
+test('parseDownloadOptions detects quality/codec/size from a plain-text line with no "|" separator at all', () => {
+  const opts = parseDownloadOptions(NO_PIPE_PLAIN_LABEL_SAMPLE);
+  assert.equal(opts.length, 2);
+  assert.equal(opts[0].quality, '480p');
+  assert.equal(opts[0].qualityLabel, '480p x264');
+  assert.equal(opts[0].sizeLabel, '400 MB');
+  assert.equal(opts[1].quality, '1080p');
+  assert.equal(opts[1].qualityLabel, '1080p x264 DD5.1');
+  assert.equal(opts[1].sizeLabel, '2.31 GB');
+});
+
 test('parseDownloadOptions handles a per-episode size range ("350-500 MB")', () => {
   const html = `
     <div class="box download"><div class="box-inner-block">

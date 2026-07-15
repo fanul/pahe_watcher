@@ -74,6 +74,14 @@ const SIZE_RE_SRC = '[\\d.]+(?:\\s*-\\s*[\\d.]+)?\\s?(?:GB|MB)';
 // line in the technical-spec block, which never has a pipe+size after it).
 const PLAIN_LABEL_RE = new RegExp(`^(.*?(?:2160p|1080p|720p|480p)[^|]*?)\\s*\\|\\s*(${SIZE_RE_SRC})`, 'i');
 
+// Same plain-text heading, but with no "|" separator at all — e.g.
+// "480p x264 400 MB<br />" (quality, codec, and size run together as one
+// space-separated line, no wrapper, no pipe). Anchored to the end of the
+// string (unlike PLAIN_LABEL_RE) so it only matches when the size is truly
+// the last thing on the line — a tech-spec line that merely mentions a
+// resolution won't also happen to end in "NN GB/MB".
+const PLAIN_LABEL_NO_PIPE_RE = new RegExp(`^(.*?(?:2160p|1080p|720p|480p).*?)\\s+(${SIZE_RE_SRC})$`, 'i');
+
 // A bare size figure with no quality token attached — e.g. the " | 750 MB"
 // text that immediately follows a bolded "<b>720p x264</b>" heading, or the
 // " 350 MB" / " 7.87 GB" that follows a non-quality sub-heading like
@@ -134,6 +142,15 @@ export function parseDownloadOptions(html) {
         currentLabel = plainLabelMatch[1].trim();
         currentQuality = (currentLabel.match(QUALITY_RE) || [])[0]?.toLowerCase() || null;
         currentSize = plainLabelMatch[2];
+        pendingSeasonHeading = null;
+        continue;
+      }
+
+      const plainLabelNoPipeMatch = item.text.match(PLAIN_LABEL_NO_PIPE_RE);
+      if (plainLabelNoPipeMatch) {
+        currentLabel = plainLabelNoPipeMatch[1].trim();
+        currentQuality = (currentLabel.match(QUALITY_RE) || [])[0]?.toLowerCase() || null;
+        currentSize = plainLabelNoPipeMatch[2];
         pendingSeasonHeading = null;
         continue;
       }
