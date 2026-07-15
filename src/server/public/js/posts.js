@@ -244,3 +244,23 @@ export function renderPosts(state) {
   const btnLoadMore = $('#btnLoadMorePosts');
   if (btnLoadMore) btnLoadMore.style.display = offset < total ? '' : 'none';
 }
+
+export function hasActiveFilters() {
+  const f = currentFilters();
+  return f.search !== '' ||
+         f.type !== 'all' ||
+         f.provider !== 'all' ||
+         f.quality !== 'all' ||
+         f.codec !== 'all' ||
+         f.genre !== 'all' ||
+         f.year !== 'all' ||
+         f.duration !== 'all' ||
+         f.rating !== 'all' ||
+         f.sort !== 'date_desc';
+}
+
+export function setTotalPostCount(n) {
+  total = n;
+  const el = $('#postCount');
+  if (el) el.textContent = `(${total})`;
+}

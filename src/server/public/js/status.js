@@ -1,5 +1,6 @@
 import { $ } from './state.js';
 import { timeago } from './utils.js';
+import { hasActiveFilters, setTotalPostCount } from './posts.js';
 
 export function renderStatus(s, state) {
   state.status = s;
@@ -21,4 +22,10 @@ export function renderStatus(s, state) {
   $('#btnWatcher').textContent = w.paused ? 'Resume watcher' : 'Pause watcher';
   $('#btnQueue').textContent = q.paused ? 'Resume queue' : 'Pause queue';
   $('#jobStats').textContent = `${q.total} total · ${q.done} done · ${q.failed} failed`;
+
+  if (s.counts && typeof s.counts.posts === 'number') {
+    if (!hasActiveFilters()) {
+      setTotalPostCount(s.counts.posts);
+    }
+  }
 }
