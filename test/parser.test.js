@@ -380,6 +380,56 @@ test('the title fallback never overwrites a quality this pass already resolved c
   assert.equal(opts[0].quality, '480p');
 });
 
+// Real markup from https://pahe.ink/vikings-season-1-4/ — a codec-only bold
+// tag ("<strong>x264</strong>") appearing mid-line, after the quality was
+// already established as plain text just before it. The old code treated
+// ANY bold tag matching CODEC_RE as a full heading and overwrote
+// currentLabel/currentQuality with just the codec, silently nulling out a
+// quality (and, since season was folded into currentLabel, the season too)
+// this pass had already correctly resolved.
+const CODEC_ONLY_BOLD_TAG_SAMPLE = `
+  <div class="box download"><div class="box-inner-block">
+    <b>Season 1</b><br />
+    720p <strong>x264 </strong>| 3.42 GB<br />
+    <a href="https://teknoasian.com/?ht=s1a">GD</a>
+  </div></div>
+  <div class="box download"><div class="box-inner-block">
+    720p <strong>x265 10-Bit</strong> | 2.73 GB<br />
+    <a href="https://teknoasian.com/?ht=s1b">GD</a>
+  </div></div>
+  <div class="box download"><div class="box-inner-block">
+    <b>Season 2</b><br />
+    1080p <strong>x264</strong> | 5.1 GB<br />
+    <a href="https://teknoasian.com/?ht=s2a">GD</a>
+  </div></div>
+`;
+
+test('a codec-only bold tag (e.g. "720p <strong>x264</strong> | 3.42 GB") augments the running label instead of nulling out an already-resolved quality', () => {
+  const opts = parseDownloadOptions(CODEC_ONLY_BOLD_TAG_SAMPLE);
+  assert.equal(opts.length, 3);
+  assert.equal(opts[0].quality, '720p');
+  assert.equal(opts[0].qualityLabel, 'Season 1 720p x264');
+  assert.equal(opts[0].season, 1);
+  assert.equal(opts[0].sizeLabel, '3.42 GB');
+});
+
+test('season persists across a second quality tier under the same bare "Season N" heading, even with no season heading repeated for that tier', () => {
+  const opts = parseDownloadOptions(CODEC_ONLY_BOLD_TAG_SAMPLE);
+  // Second tier ("720p x265 10-Bit | 2.73 GB") has no <b>Season N</b> of its
+  // own — it's still under Season 1's block from the first tier.
+  assert.equal(opts[1].quality, '720p');
+  assert.equal(opts[1].qualityLabel, '720p x265 10-Bit');
+  assert.equal(opts[1].season, 1);
+  assert.equal(opts[1].sizeLabel, '2.73 GB');
+});
+
+test('a new "Season N" heading correctly overrides the persisted season for later tiers', () => {
+  const opts = parseDownloadOptions(CODEC_ONLY_BOLD_TAG_SAMPLE);
+  assert.equal(opts[2].quality, '1080p');
+  assert.equal(opts[2].season, 2);
+  assert.equal(opts[2].sizeLabel, '5.1 GB');
+});
+
 test('parseDownloadOptions handles a per-episode size range ("350-500 MB")', () => {
   const html = `
     <div class="box download"><div class="box-inner-block">

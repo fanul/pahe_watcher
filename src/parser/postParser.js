@@ -135,6 +135,14 @@ export function parseDownloadOptions(html, postTitle = '') {
   // node if it carries a quality token; otherwise dropped so it can't leak
   // into an unrelated later heading.
   let pendingSeasonHeading = null;
+  // Persists across multiple quality tiers under the same bare season
+  // heading (e.g. "<b>Season 1</b>" followed by both a "720p x264" tier AND
+  // a separate later "720p x265 10-Bit" tier with no season heading of its
+  // own) — unlike pendingSeasonHeading, which is a one-shot value consumed
+  // by only the first tier, this stays in effect until a new "Season N"
+  // heading actually appears. Used as a fallback when currentLabel itself
+  // doesn't contain "Season N" text (e.g. this second tier's own label).
+  let currentSeason = null;
 
   const flat = [];
   flattenNodes($, $.root(), flat);
@@ -142,13 +150,22 @@ export function parseDownloadOptions(html, postTitle = '') {
   for (const item of flat) {
     if (item.type === 'b') {
       const text = $(item.el).text().replace(/\s+/g, ' ').trim();
-      if (QUALITY_RE.test(text) || CODEC_RE.test(text)) {
+      if (QUALITY_RE.test(text)) {
         currentLabel = text;
         currentQuality = (text.match(QUALITY_RE) || [])[0]?.toLowerCase() || null;
         currentSize = null;
         pendingSeasonHeading = null;
       } else if (/^season\s*\d+$/i.test(text)) {
         pendingSeasonHeading = text;
+        currentSeason = parseInt(text.match(/season\s*(\d+)/i)[1], 10);
+      } else if (CODEC_RE.test(text)) {
+        // A codec-only bold tag with no quality token of its own, e.g.
+        // "Season 1<br/>720p <strong>x264</strong> | 3.42 GB" — the quality
+        // (and season, folded into currentLabel) were already established
+        // by the plain-text "720p" just before it. Augment the running
+        // label instead of overwriting it, so this doesn't null out a
+        // quality/season this pass already correctly resolved.
+        currentLabel = currentLabel ? `${currentLabel} ${text}`.trim() : text;
       }
       continue;
     }
@@ -204,9 +221,12 @@ export function parseDownloadOptions(html, postTitle = '') {
 
     // Multi-season "Complete" archive posts tag each quality heading with its
     // season, e.g. "Season 1 – 720p x264" (pahe.ink's season-tabs layout).
-    // Single-season posts have no such prefix — season stays null for them.
+    // Falls back to currentSeason (the last bare "Season N" heading seen) for
+    // later quality tiers under the same season that don't restate it in
+    // their own label. Single-season posts have no season anywhere — stays
+    // null for them.
     const seasonMatch = currentLabel && currentLabel.match(/season\s*(\d+)/i);
-    const season = seasonMatch ? parseInt(seasonMatch[1], 10) : null;
+    const season = seasonMatch ? parseInt(seasonMatch[1], 10) : currentSeason;
 
     options.push({
       provider: code,
