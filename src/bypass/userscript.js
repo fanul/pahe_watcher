@@ -56,6 +56,46 @@ export const AD_HOSTS = [
   'ouo.press',
 ];
 
+// The "startButton/getnewlink" ad-gate template — blogmystt.com's own DOM
+// structure (#startButton, #getnewlink, #generater/#lite-start-sora-a,
+// #showlink/#lite-end-sora-button), white-labeled across many rotating
+// lookalike domains to dodge adblock host-lists. Every one of these uses the
+// identical click-through automation as blogmystt.com — see fallback.js.
+export const ADBLOCK_GATE_HOSTS = [
+  'blogmystt.com',
+  'wp2hostt.com',
+  'intercelestial.com',
+  'hosttbuzz.com',
+  'policiesreview.com',
+  'healthylifez.com',
+  'insurancemyst.com',
+  'hostingbixby.com',
+  'policiesbuzzz.com',
+  'hostingzbuzz.com',
+  'bixbyfortech.com',
+  'serverguidez.com',
+  'comparepolicyy.com',
+  'cheaplann.com',
+  'vpshostplans.com',
+  'ensureguide.com',
+  'fitnessplanss.com',
+  'sharedwebs.com',
+  'hostserverz.com',
+  'cloudhostingz.com',
+  'carensureplan.com',
+  'playareaz.com',
+  'fitnesstipz.com',
+  'ensuretips.com',
+  'softdevelopp.com',
+  'vpzserver.com',
+  'tophostdeal.com',
+  'evensuregd.com',
+  'bestensuree.com',
+  'hostzteam.com',
+  'devsoftwr.com',
+  'zpserver.com',
+];
+
 // Combine them into a single self-contained string to inject into pages
 export function getInjectedAutomationScript(config = {}) {
   const injectOuo = config.bypass?.injectOuoScript !== false;
@@ -120,6 +160,7 @@ export function getInjectedAutomationScript(config = {}) {
     }
 
     const o = window.location.origin;
+    const adblockGateHosts = ${JSON.stringify(ADBLOCK_GATE_HOSTS)};
     const startTime = Date.now();
 
     console.log('[pahe-auto] Injected on ' + window.location.href);

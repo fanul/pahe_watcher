@@ -23,13 +23,20 @@
         }
       }
 
-      // 3. linegee.net
+      // 3. linegee.net — the real "Continue" button's click handler opens an
+      // ad popup (window.open) *before* navigating the current tab via this
+      // same atob()-encoded query string. Firing the navigation almost
+      // immediately (the old 200ms delay) outraces whatever the popup needs
+      // to register server-side, so the destination bounces back to this
+      // exact same page — an infinite loop (see the stuck-loop guard in
+      // src/bypass/index.js). A generous delay gives that popup time to
+      // load first, same as a real human clicking through it.
       if (/linegee\.net/.test(o) && document.readyState === 'complete') {
         document.querySelectorAll('script').forEach((s) => {
           if (/location\.href.*atob/.test(s.textContent) && !window.__done) {
             const b64 = s.textContent.replace(/[\t\s]/g, '').replace(/^.*location.href.*atob\('(.*)'\).*/, '$1');
             window.__done = true;
-            setTimeout(() => { window.location.href = window.location.href + atob(b64); }, 200);
+            setTimeout(() => { window.location.href = window.location.href + atob(b64); }, 5000);
           }
         });
       }
@@ -50,8 +57,10 @@
         }
       }
 
-      // 5. blogmystt.com
-      if (/blogmystt\.com/.test(o)) {
+      // 5. blogmystt.com and its white-labeled lookalike domains (same
+      // "startButton/getnewlink" ad-gate template, just rotated to dodge
+      // adblock host-lists — see ADBLOCK_GATE_HOSTS in userscript.js).
+      if (/blogmystt\.com/.test(o) || adblockGateHosts.some((h) => o.includes(h))) {
         try {
           const first = document.querySelector('a#startButton');
           const second = document.querySelector('button#getnewlink');

@@ -4,6 +4,7 @@ import { createCaptchaSolver, detectCaptcha } from './captcha/index.js';
 import { isGdflixUrl, resolveGdflix, classifyFinalLink } from './resolvers/gdflix.js';
 import { isGoogleAuthHost, ensureGoogleLogin, normalizeGoogleDriveLink } from './resolvers/googleDrive.js';
 import { isDeadLinkPage } from './deadLinkPatterns.js';
+import { AD_HOSTS } from './userscript.js';
 
 const log = createLogger('bypass');
 
@@ -196,10 +197,13 @@ export class BypassEngine {
     let handledGoogleAuth = false;
     const deadCheckedUrls = new Set();
 
+    // Reuses AD_HOSTS (the full ad-chain host list the page automation
+    // already knows how to click through) plus the non-shortener hosts a
+    // resolved chain can legitimately land on — so a popup tab never gets
+    // pruned before the automation gets a chance to act on it.
     const WHITELIST_DOMAINS = this.config?.bypass?.tabPruningWhitelist || [
-      'pahe.plus', 'old.pahe.plus', 'ouo.io', 'ouo.press', 'gdflix', 'drive.google',
-      'pixeldrain', 'pixeldra.in', 'teknoasian.com', 'spacetica.com', 'oii.la', 'linegee.net',
-      'tpi.li', 'wordcounter.icu', 'about:blank'
+      ...AD_HOSTS,
+      'gdflix', 'drive.google', 'pixeldrain', 'pixeldra.in', 'about:blank',
     ];
 
     while (Date.now() < deadline) {
