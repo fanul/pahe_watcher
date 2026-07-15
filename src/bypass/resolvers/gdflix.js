@@ -70,8 +70,89 @@ export function isGdflixUrl(url) {
 export function classifyFinalLink(url) {
   if (/drive\.google\.com|googleusercontent|usercontent\.google/.test(url)) return 'google-drive';
   if (/pixeldrain|pixeldra\.in/.test(url)) return 'pixeldrain';
+  // `workers.dev`/`.r2.` here is a catch-all for hosts we haven't taught
+  // resolveGdflix to follow through yet (see MULTIUP_VALIDATE_HOST_RE below
+  // for the one we do). Confirmed live: validate.multiup*.workers.dev is a
+  // Cloudflare-Worker front for multiup.io — it redirects to a real
+  // multi-mirror page (gofile.io/1fichier.com/megaup.net, no Google Drive
+  // involved at all), not a Google Drive link as it might look at a glance.
   if (/workers\.dev|\.r2\./.test(url)) return 'worker-proxy';
   return 'direct';
+}
+
+// multiup.io's Cloudflare-Worker validator. It's an intermediate redirector,
+// not a real final host: it 302s through to a multiup mirror-list page
+// (e.g. goflix.sbs — a whitelabeled multiup.io instance) offering several
+// third-party mirrors (gofile.io, 1fichier.com, megaup.net) plus multiup's
+// own same-host "/download-fast/" link. The "/download-fast/" link is NOT
+// clean either — it meta-refreshes into an unrelated ad-redirect domain
+// before ever reaching a file — so resolveMultiupMirror deliberately skips
+// it and prefers a known, stable third-party mirror host instead.
+const MULTIUP_VALIDATE_HOST_RE = /^validate\.multiup\d*\.workers\.dev$/i;
+
+// Preferred by observed reliability (least gated/ad-walled first), not by
+// bandwidth — any of these is a genuine, separately-hostable mirror.
+const MULTIUP_MIRROR_HOST_RE = /gofile\.io|megaup\.net|1fichier\.com|mega\.nz/i;
+const MULTIUP_MIRROR_PREFERENCE = ['gofile.io', 'megaup.net', '1fichier.com', 'mega.nz'];
+
+export function isMultiupValidateUrl(url) {
+  try {
+    return MULTIUP_VALIDATE_HOST_RE.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Picks the best mirror link out of every href found on a resolved multiup
+ * mirror-list page. Pure/testable — the browser-dependent part is just
+ * collecting `hrefs` (see resolveMultiupMirror).
+ */
+export function pickMultiupMirrorLink(hrefs) {
+  const candidates = (hrefs || []).filter((h) => MULTIUP_MIRROR_HOST_RE.test(h));
+  for (const host of MULTIUP_MIRROR_PREFERENCE) {
+    const match = candidates.find((h) => h.includes(host));
+    if (match) return match;
+  }
+  return candidates[0] || null;
+}
+
+/**
+ * Follows a multiup.io validator URL through to its real mirror-list page and
+ * returns a concrete third-party mirror link, classified normally. Returns
+ * null (never throws) if the page can't be loaded or has no recognizable
+ * mirror — callers should fall back to the raw validator URL in that case.
+ */
+async function resolveMultiupMirror(page, validateUrl, ctx) {
+  ctx.log?.(`[GDFlix] Following multiup validator through to its mirror list: ${validateUrl}`);
+  const mirrorPage = await page.context().newPage();
+  try {
+    await mirrorPage.goto(validateUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const hrefs = await mirrorPage
+      .evaluate(() => [...document.querySelectorAll('a[href]')].map((a) => a.href))
+      .catch(() => []);
+    const chosen = pickMultiupMirrorLink(hrefs);
+    if (chosen) {
+      ctx.log?.(`[GDFlix] multiup mirror resolved: ${chosen}`);
+      return { finalUrl: chosen, linkType: classifyFinalLink(chosen) };
+    }
+    ctx.log?.('[GDFlix] multiup mirror list page had no recognizable mirror link.');
+    return null;
+  } catch (err) {
+    ctx.log?.(`[GDFlix] Failed to follow multiup validator: ${err.message}`);
+    return null;
+  } finally {
+    await mirrorPage.close().catch(() => {});
+  }
+}
+
+/** Classifies a found URL, following it through to a real mirror first if it's an intermediate multiup validator. */
+async function finalizeLink(page, url, ctx) {
+  if (isMultiupValidateUrl(url)) {
+    const resolved = await resolveMultiupMirror(page, url, ctx);
+    if (resolved) return resolved;
+  }
+  return { finalUrl: url, linkType: classifyFinalLink(url) };
 }
 
 /**
@@ -275,7 +356,7 @@ export async function resolveGdflix(page, { credentials, captcha } = {}, ctx = {
   const directFallback = await scanPageForFinalLink(page, FINAL_HOST_RE.source);
   if (directFallback) {
     ctx.log?.(`[GDFlix] Found fallback link in DOM: ${directFallback}`);
-    return { finalUrl: directFallback, linkType: classifyFinalLink(directFallback) };
+    return await finalizeLink(page, directFallback, ctx);
   }
 
   // 4) If still nothing, wait for any fallback/mirror button (e.g. Instant DL, Fast Cloud) to appear and click it
@@ -412,16 +493,15 @@ async function clickAndAwaitLink(page, btn, label, ctx, hostReSource = FINAL_HOS
       const u = p.url();
       if (hostRe.test(u)) {
         ctx.log?.(`[GDFlix] Found final URL in browser address bar: ${u}`);
-        const linkType = classifyFinalLink(u);
         if (p !== page) await p.close().catch(() => {});
-        return { finalUrl: u, linkType };
+        return await finalizeLink(page, u, ctx);
       }
 
       const found = await scanPageForFinalLink(p, hostReSource);
       if (found) {
         ctx.log?.(`[GDFlix] Successfully captured generated link: ${found}`);
         if (p !== page) await p.close().catch(() => {});
-        return { finalUrl: found, linkType: classifyFinalLink(found) };
+        return await finalizeLink(page, found, ctx);
       }
     }
 
