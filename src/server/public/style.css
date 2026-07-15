@@ -1058,5 +1058,15 @@ body.layout-stay-on-top #jobs.list {
   }
 }
 
+.job-title {
+  font-weight: 700;
+  font-size: 13.5px;
+  margin-bottom: 6px;
+  color: #fff;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
 
 

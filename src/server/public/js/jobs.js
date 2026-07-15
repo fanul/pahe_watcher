@@ -85,11 +85,11 @@ export function renderJobs(state) {
     }
 
     return `<div class="${cardClass}">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
-        <div class="title">${esc(j.title || 'job')}</div>
+      <div class="job-title">${esc(j.title || 'job')}</div>
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px">
+        <div class="meta" style="margin-bottom:0">${j.provider || ''} ${j.quality || ''} · attempt ${j.attempts || 0}${errorSpan}</div>
         <span class="job-status ${j.status}">${esc(statusText)}</span>
       </div>
-      <div class="meta">${j.provider || ''} ${j.quality || ''} · attempt ${j.attempts || 0}${errorSpan}</div>
       ${final}
       ${logs ? `<div class="joblog">${esc(logs)}</div>` : ''}
       ${acts.length ? `<div class="actions">${acts.join('')}</div>` : ''}
