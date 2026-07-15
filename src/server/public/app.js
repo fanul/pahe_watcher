@@ -2,7 +2,7 @@
 import { $, api, state, esc } from './js/state.js';
 import { upsert } from './js/utils.js';
 import { renderStatus } from './js/status.js';
-import { loadPosts, renderPosts, notePostInserted, initPostFacets, markPostsWithDeadJob, markOptionReported, markPostSourceIncomplete } from './js/posts.js';
+import { loadPosts, renderPosts, notePostInserted, initPostFacets, markPostsWithDeadJob, markOptionReported, markPostSourceIncomplete, missingMetadataFields } from './js/posts.js';
 import { loadJobs, renderJobs, noteJobInserted, noteJobsRemoved, resetJobsCleared } from './js/jobs.js';
 import { initCrawl, updateCrawlProgress } from './js/crawl.js';
 import { initSettings, applyLayoutMode } from './js/settings.js';
@@ -227,10 +227,18 @@ function closeMetadataMenu() {
   metadataMenu.classList.add('hidden');
   metadataMenu.innerHTML = '';
   delete metadataMenu.dataset.forPost;
+  delete metadataMenu.dataset.kind;
+}
+
+function positionMetadataMenu(triggerEl) {
+  const rect = triggerEl.getBoundingClientRect();
+  metadataMenu.style.top = `${rect.bottom + 4}px`;
+  metadataMenu.style.left = `${Math.max(4, rect.right - 220)}px`;
+  metadataMenu.classList.remove('hidden');
 }
 
 function toggleMetadataMenu(badgeEl, postId) {
-  const wasOpenForThis = metadataMenu.dataset.forPost === String(postId) && !metadataMenu.classList.contains('hidden');
+  const wasOpenForThis = metadataMenu.dataset.kind === 'action' && metadataMenu.dataset.forPost === String(postId) && !metadataMenu.classList.contains('hidden');
   closeMetadataMenu();
   if (wasOpenForThis) return; // clicking the same badge again just closes it
 
@@ -238,19 +246,45 @@ function toggleMetadataMenu(badgeEl, postId) {
   if (!post) return;
 
   metadataMenu.dataset.forPost = String(postId);
+  metadataMenu.dataset.kind = 'action';
   metadataMenu.innerHTML = post.metadataSourceIncomplete
     ? `<button type="button" class="badge-menu-item" data-unmark-source-incomplete="${postId}">Unmark — include in batch resync again</button>`
     : `<button type="button" class="badge-menu-item" data-mark-source-incomplete="${postId}">Source has no metadata — exclude from batch resync</button>`;
 
-  const rect = badgeEl.getBoundingClientRect();
-  metadataMenu.style.top = `${rect.bottom + 4}px`;
-  metadataMenu.style.left = `${Math.max(4, rect.right - 220)}px`;
-  metadataMenu.classList.remove('hidden');
+  positionMetadataMenu(badgeEl);
+}
+
+/** Read-only bubble listing exactly which required metadata fields this post is missing. */
+function toggleMetadataInfo(infoBtnEl, postId) {
+  const wasOpenForThis = metadataMenu.dataset.kind === 'info' && metadataMenu.dataset.forPost === String(postId) && !metadataMenu.classList.contains('hidden');
+  closeMetadataMenu();
+  if (wasOpenForThis) return;
+
+  const post = state.posts.find((p) => String(p.id) === String(postId));
+  if (!post) return;
+
+  const missing = missingMetadataFields(post);
+  metadataMenu.dataset.forPost = String(postId);
+  metadataMenu.dataset.kind = 'info';
+  metadataMenu.innerHTML = `
+    <div class="badge-menu-info">
+      <div class="badge-menu-info-title">Missing metadata field(s)</div>
+      ${missing.length
+        ? `<ul>${missing.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>`
+        : '<div class="muted">Nothing missing — check back after the next sync.</div>'}
+    </div>
+  `;
+
+  positionMetadataMenu(infoBtnEl);
 }
 
 document.body.addEventListener('click', async (e) => {
   const t = e.target;
 
+  if (t.dataset.metadataInfo) {
+    toggleMetadataInfo(t, t.dataset.metadataInfo);
+    return;
+  }
   if (t.dataset.metadataBadge) {
     toggleMetadataMenu(t, t.dataset.metadataBadge);
     return;

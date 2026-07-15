@@ -336,17 +336,24 @@ body {
   position: relative;
 }
 
-/* Real, clickable badge (replaces the old ::before pseudo-badge) — opens a
-   dropdown (#metadataBadgeMenu) to mark/unmark "source incomplete". */
-.metadata-badge {
+/* Holds the info button + badge together, top-right of the card. */
+.metadata-badge-row {
   position: absolute;
   top: 6px;
   right: 6px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Real, clickable badge (replaces the old ::before pseudo-badge) — opens a
+   dropdown (#metadataBadgeMenu) to mark/unmark "source incomplete". */
+.metadata-badge {
   font-size: 10px;
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
-  z-index: 1;
   border: none;
   cursor: pointer;
   font-family: inherit;
@@ -361,6 +368,26 @@ body {
 .metadata-badge.source-incomplete {
   background: rgba(148, 163, 184, 0.85);
   color: #0f172a;
+}
+
+/* Small "ℹ" trigger to the left of the badge — opens a read-only bubble
+   listing exactly which required fields this post is missing. */
+.metadata-info-btn {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(99, 102, 241, 0.85);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: inherit;
 }
 
 /* Shared floating dropdown for the metadata badge — appended once to <body>
@@ -397,6 +424,28 @@ body {
 
 .badge-menu-item:hover {
   background: rgba(99, 102, 241, 0.15);
+}
+
+/* Read-only content for the info-bubble variant (missing-fields breakdown). */
+.badge-menu-info {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.badge-menu-info-title {
+  font-weight: 700;
+  color: var(--amber);
+  margin-bottom: 4px;
+}
+
+.badge-menu-info ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.badge-menu-info li {
+  margin: 2px 0;
 }
 
 .card-poster {

@@ -7,6 +7,23 @@ let offset = 0;
 let total = 0;
 let loading = false;
 
+// Mirrors REQUIRED_FIELDS in src/parser/metadata/index.js — durationMinutes
+// is deliberately excluded there (and here) since many legitimate posts
+// never have a runtime figure. Keep this list in sync if that one changes.
+const REQUIRED_METADATA_FIELD_LABELS = [
+  ['poster', 'Poster'], ['rating', 'Rating'], ['synopsis', 'Synopsis'],
+  ['year', 'Year'], ['genre', 'Genre'], ['actors', 'Actors'],
+];
+
+/** Which required metadata fields a post is missing — for the info-bubble breakdown next to the incomplete badge. */
+export function missingMetadataFields(p) {
+  const missing = REQUIRED_METADATA_FIELD_LABELS
+    .filter(([key]) => p[key] === null || p[key] === undefined || p[key] === '')
+    .map(([, label]) => label);
+  if (!p.director && !p.creator) missing.push('Director / Creator');
+  return missing;
+}
+
 function currentFilters() {
   return {
     search: $('#filterSearch')?.value?.trim() || '',
@@ -213,15 +230,19 @@ export function renderPosts(state) {
       ? `<div class="meta small muted">${creditsParts.join(' &nbsp;·&nbsp; ')}</div>` : '';
 
     let metadataBadgeHtml = '';
+    let metadataInfoHtml = '';
     if (p.metadataSourceIncomplete) {
       metadataBadgeHtml = `<button type="button" class="metadata-badge source-incomplete" data-metadata-badge="${p.id}" title="Manually flagged: pahe.ink's own page never had this data">ℹ Source incomplete</button>`;
     } else if (!p.metadataComplete) {
       metadataBadgeHtml = `<button type="button" class="metadata-badge incomplete" data-metadata-badge="${p.id}" title="Click to change">⚠ Incomplete metadata</button>`;
     }
+    if (!p.metadataComplete) {
+      metadataInfoHtml = `<button type="button" class="metadata-info-btn" data-metadata-info="${p.id}" title="Show which fields are missing">ℹ</button>`;
+    }
 
     return `
       <div class="card${p.hasDeadJob ? ' dead-link' : ''}${!p.metadataComplete ? ' metadata-incomplete' : ''}">
-        ${metadataBadgeHtml}
+        ${(metadataInfoHtml || metadataBadgeHtml) ? `<div class="metadata-badge-row">${metadataInfoHtml}${metadataBadgeHtml}</div>` : ''}
         <div class="card-poster">${posterHtml}</div>
         <div class="card-content">
           <div class="title" title="${esc(p.title)}">${esc(p.title)}</div>
