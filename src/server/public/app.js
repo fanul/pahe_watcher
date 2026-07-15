@@ -70,14 +70,66 @@ function connectWs() {
   };
 }
 
+function shouldPrependPost(payload) {
+  // 1. If it's already in the list, we always update it (return true for upsert to run)
+  if (state.posts.some((p) => p.id === payload.id)) {
+    return true;
+  }
+
+  // 2. If it's not in the list, we only prepend it if:
+  // - We are showing the first page of posts (posts count is <= 24)
+  if (state.posts.length > 24) return false;
+
+  // - There are no active filters (which would restrict what should be shown)
+  const search = $('#filterSearch')?.value?.trim() || '';
+  if (search) return false;
+
+  const type = $('#filterType')?.value || 'all';
+  if (type !== 'all') return false;
+
+  const provider = $('#filterProvider')?.value || 'all';
+  if (provider !== 'all') return false;
+
+  const resolution = $('#filterResolution')?.value || 'all';
+  if (resolution !== 'all') return false;
+
+  const codec = $('#filterCodec')?.value || 'all';
+  if (codec !== 'all') return false;
+
+  const genreEl = $('#filterGenre');
+  if (genreEl) {
+    const selected = Array.from(genreEl.selectedOptions).map(o => o.value);
+    if (selected.length > 0 && !selected.includes('all')) return false;
+  }
+
+  const year = $('#filterYear')?.value || 'all';
+  if (year !== 'all') return false;
+
+  const rating = $('#filterRating')?.value || 'all';
+  if (rating !== 'all') return false;
+
+  const sort = $('#filterSort')?.value || 'date_desc';
+  if (sort !== 'date_desc') return false;
+
+  // - The post is newer than the newest post in our current list (preventing old backfill posts from being prepended)
+  const newestPost = state.posts[0];
+  if (newestPost && payload.id < newestPost.id) {
+    return false;
+  }
+
+  return true;
+}
+
 let logBuffer = [];
 function handleEvent(type, payload) {
   switch (type) {
     case 'log': appendLog(payload); break;
     case 'post:new': {
-      const inserted = upsert(state.posts, payload, (p) => p.id);
-      if (inserted) notePostInserted();
-      renderPosts(state);
+      if (shouldPrependPost(payload)) {
+        const inserted = upsert(state.posts, payload, (p) => p.id);
+        if (inserted) notePostInserted();
+        renderPosts(state);
+      }
       refreshStatusSoon();
       break;
     }
