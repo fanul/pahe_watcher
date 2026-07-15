@@ -174,6 +174,15 @@ export function parseDownloadOptions(html, postTitle = '') {
     }
 
     if (item.type === 'text') {
+      if (/^season\s*\d+$/i.test(item.text)) {
+        // A bare "Season N" run as plain text (not wrapped in <b>), e.g.
+        // "Season 1 <b>BluRay 720p x264</b><br/>" — same meaning as the
+        // bold-only season heading above, just not bolded on this layout.
+        pendingSeasonHeading = item.text;
+        currentSeason = parseInt(item.text.match(/season\s*(\d+)/i)[1], 10);
+        continue;
+      }
+
       const plainLabelMatch = item.text.match(PLAIN_LABEL_RE);
       if (plainLabelMatch) {
         currentLabel = plainLabelMatch[1].trim();

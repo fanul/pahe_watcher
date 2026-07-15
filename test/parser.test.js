@@ -495,3 +495,34 @@ test('parseDownloadOptions handles a per-episode size range ("350-500 MB")', () 
   assert.equal(opts[0].sizeLabel, '350-500 MB');
 });
 
+// Real markup from https://pahe.ink/lie-to-me-season-1-3-complete-bluray-web-dl-720p/ —
+// "Season N" appears as a bare plain-text run immediately before the quality
+// <b> tag, not as its own standalone bold heading (the only form the old
+// code recognized). The season was silently dropped and every option came
+// out with season: null. This layout also genuinely has no size figure
+// anywhere in the download box for any tier — that part is real source data,
+// not a bug.
+const SEASON_AS_PLAIN_TEXT_SAMPLE = `
+  <div class="box download"><div class="box-inner-block">
+    Season 1 <b>BluRay 720p x264</b><br>
+    <a href="https://teknoasian.com/?ht=s1">GD</a>
+  </div></div>
+  <div class="box download"><div class="box-inner-block">
+    Season 2 <b>WEB-DL 720p x264</b><br>
+    <a href="https://teknoasian.com/?ht=s2">GD</a>
+  </div></div>
+  <div class="box download"><div class="box-inner-block">
+    Season 3 <b>WEB-DL 720p x264</b><br>
+    <a href="https://teknoasian.com/?ht=s3">GD</a>
+  </div></div>
+`;
+
+test('a bare "Season N" plain-text run (not wrapped in <b>) right before a quality heading is still recognized as the season', () => {
+  const opts = parseDownloadOptions(SEASON_AS_PLAIN_TEXT_SAMPLE);
+  assert.equal(opts.length, 3);
+  assert.equal(opts[0].season, 1);
+  assert.equal(opts[0].quality, '720p');
+  assert.equal(opts[1].season, 2);
+  assert.equal(opts[2].season, 3);
+});
+
