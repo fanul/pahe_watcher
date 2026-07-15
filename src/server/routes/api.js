@@ -70,6 +70,20 @@ export function createApiRouter(app) {
     res.json(post);
   });
 
+  // Force a fresh fetch+reparse+overwrite of one post — e.g. to pick up
+  // metadata/quality/size fields the parser didn't extract at the time of
+  // the original sync, without waiting for a catalog-wide sweep.
+  router.post('/posts/:id/resync', async (req, res) => {
+    const existing = store.getPost(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'not found' });
+    try {
+      const post = await watcher.syncEngine.deepSyncPost(existing.id);
+      res.json(post);
+    } catch (err) {
+      res.status(500).json({ error: `Failed to resync post: ${err.message}` });
+    }
+  });
+
   // Enqueue resolution jobs for a post's matching options.
   router.post('/posts/:id/resolve', async (req, res) => {
     let post = store.getPost(req.params.id);

@@ -209,6 +209,7 @@ export function renderPosts(state) {
           </div>
           <div class="actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <button class="btn small" data-resolve-post="${p.id}">Resolve preferred</button>
+            <button class="btn small ghost" data-resync-post="${p.id}" title="Re-fetch this post from pahe.ink and refill any missing metadata/quality/size">↻ Resync</button>
             ${(() => {
               const resolvedOpts = (p.options || []).filter(o => o.resolvedUrl);
 

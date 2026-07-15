@@ -41,11 +41,58 @@ function isShortener(url) {
 }
 
 /**
+ * Flattens the DOM into a document-order sequence of the nodes
+ * parseDownloadOptions cares about: <b>/<strong> headings, plain text runs,
+ * and <a> anchors. pahe.ink uses two layouts for the quality/size heading
+ * that precedes each row of provider links — bolded
+ * ("<b>720p x264</b> | 750 MB") or plain text ("720p x264 | 750 MB", no
+ * wrapper at all) — so both need to be visible to the same walk, not just
+ * elements matched by a flat `b, strong, a` selector.
+ */
+function flattenNodes($, root, out) {
+  $(root).contents().each((_, node) => {
+    if (node.type === 'text') {
+      const text = (node.data || '').trim();
+      if (text) out.push({ type: 'text', text });
+    } else if (node.type === 'tag') {
+      const tag = node.tagName?.toLowerCase();
+      if (tag === 'script' || tag === 'style') return;
+      if (tag === 'a') out.push({ type: 'a', el: node });
+      else if (tag === 'b' || tag === 'strong') out.push({ type: 'b', el: node });
+      else flattenNodes($, node, out);
+    }
+  });
+}
+
+// A size figure, either a single value ("750 MB") or a per-episode range
+// ("350-500 MB").
+const SIZE_RE_SRC = '[\\d.]+(?:\\s*-\\s*[\\d.]+)?\\s?(?:GB|MB)';
+
+// Plain-text quality heading, e.g. "720p x264 | 750 MB" — requires the
+// trailing "| SIZE" to distinguish a real heading from incidental mentions
+// of a resolution elsewhere in the post (e.g. the "Source ....: 1080p ..."
+// line in the technical-spec block, which never has a pipe+size after it).
+const PLAIN_LABEL_RE = new RegExp(`^(.*?(?:2160p|1080p|720p|480p)[^|]*?)\\s*\\|\\s*(${SIZE_RE_SRC})`, 'i');
+
+// A bare size figure with no quality token attached — e.g. the " | 750 MB"
+// text that immediately follows a bolded "<b>720p x264</b>" heading, or the
+// " 350 MB" / " 7.87 GB" that follows a non-quality sub-heading like
+// "<b>Per Episode</b>"/"<b>Batch</b>" within a multi-tier quality block.
+// Updates only the running size, never the quality/season context.
+const BARE_SIZE_RE = new RegExp(`^\\|?\\s*(${SIZE_RE_SRC})\\b`, 'i');
+
+/**
  * Parse a post's rendered HTML into a structured list of download options.
  *
  * Each option = { provider, providerName, quality, sizeLabel, url, host }.
- * Quality/size is inferred from the nearest preceding <b>/<strong> heading,
- * matching the pahe.ink layout: "<b>720p x264</b> | 750 MB <br> 1F GD MG VF TB".
+ * Quality is inferred from the nearest preceding quality/codec heading —
+ * either a bolded one ("<b>720p x264</b>") or, on pahe.ink posts that don't
+ * bold it, a plain-text one ("720p x264 | 750 MB"). Size is tracked
+ * independently as its own running value, since a single quality heading
+ * can cover multiple differently-sized anchor groups further down (e.g.
+ * "<b>Per Episode</b> 350 MB" then "<b>Batch</b> 7.87 GB" under the same
+ * "720p x264" heading) — the size resets whenever a new one is seen, not
+ * only when the quality changes.
  *
  * @param {string} html
  * @returns {Array<object>}
@@ -57,32 +104,40 @@ export function parseDownloadOptions(html) {
   let currentQuality = null;
   let currentSize = null;
 
-  // Walk block markers and anchors in document order.
-  $('b, strong, a').each((_, el) => {
-    const $el = $(el);
-    const tag = el.tagName?.toLowerCase();
+  const flat = [];
+  flattenNodes($, $.root(), flat);
 
-    if (tag === 'b' || tag === 'strong') {
-      const text = $el.text().replace(/\s+/g, ' ').trim();
+  for (const item of flat) {
+    if (item.type === 'b') {
+      const text = $(item.el).text().replace(/\s+/g, ' ').trim();
       if (QUALITY_RE.test(text) || CODEC_RE.test(text)) {
         currentLabel = text;
         currentQuality = (text.match(QUALITY_RE) || [])[0]?.toLowerCase() || null;
         currentSize = null;
       }
-      return;
+      continue;
+    }
+
+    if (item.type === 'text') {
+      const plainLabelMatch = item.text.match(PLAIN_LABEL_RE);
+      if (plainLabelMatch) {
+        currentLabel = plainLabelMatch[1].trim();
+        currentQuality = (currentLabel.match(QUALITY_RE) || [])[0]?.toLowerCase() || null;
+        currentSize = plainLabelMatch[2];
+        continue;
+      }
+      const bareSizeMatch = item.text.match(BARE_SIZE_RE);
+      if (bareSizeMatch) currentSize = bareSizeMatch[1];
+      continue;
     }
 
     // anchor
+    const el = item.el;
+    const $el = $(el);
     const href = $el.attr('href') || '';
-    if (!href || !isShortener(href)) return;
+    if (!href || !isShortener(href)) continue;
     const code = $el.text().replace(/\s+/g, ' ').trim().toUpperCase();
-    if (!code || code.length > 4) return; // provider codes are short (GD, 1F, ...)
-
-    // capture size that trails the bold label on the same line if present
-    if (currentLabel && currentSize === null) {
-      const m = currentLabelSize($, el, currentLabel);
-      currentSize = m;
-    }
+    if (!code || code.length > 4) continue; // provider codes are short (GD, 1F, ...)
 
     // Multi-season "Complete" archive posts tag each quality heading with its
     // season, e.g. "Season 1 – 720p x264" (pahe.ink's season-tabs layout).
@@ -100,21 +155,9 @@ export function parseDownloadOptions(html) {
       url: href,
       host: hostOf(href),
     });
-  });
+  }
 
   return dedupe(options);
-}
-
-/** Best-effort: pull the "| 750 MB" size that follows the bold quality label. */
-function currentLabelSize($, anchorEl, label) {
-  // The size text usually sits as a text node right after the <b> element,
-  // e.g. "<b>720p x264</b> | 750 MB". Look back from the anchor's parent text.
-  const parentText = $(anchorEl).parent().text();
-  const idx = parentText.indexOf(label);
-  if (idx === -1) return null;
-  const after = parentText.slice(idx + label.length, idx + label.length + 40);
-  const m = after.match(/([\d.]+\s?(?:GB|MB))/i);
-  return m ? m[1] : null;
 }
 
 function dedupe(options) {

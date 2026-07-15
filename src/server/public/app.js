@@ -218,6 +218,19 @@ document.body.addEventListener('click', async (e) => {
   // job:created/job:updated/job:deleted WS event update the UI — no full
   // list refetch per click.
   if (t.dataset.resolvePost) { await api(`/posts/${t.dataset.resolvePost}/resolve`, { method: 'POST', body: '{}' }); }
+  if (t.dataset.resyncPost) {
+    t.disabled = true;
+    const original = t.textContent;
+    t.textContent = 'Resyncing…';
+    try {
+      await api(`/posts/${t.dataset.resyncPost}/resync`, { method: 'POST', body: '{}' });
+    } catch (err) {
+      appendLog({ ts: '', level: 'error', scope: 'ui', msg: `Resync failed: ${err.message}` });
+    } finally {
+      t.disabled = false;
+      t.textContent = original;
+    }
+  }
   if (t.dataset.retry) { await api(`/jobs/${t.dataset.retry}/retry`, { method: 'POST' }); }
   if (t.dataset.cancel) { await api(`/jobs/${t.dataset.cancel}/cancel`, { method: 'POST' }); }
   if (t.dataset.pauseJob) { await api(`/jobs/${t.dataset.pauseJob}/pause`, { method: 'POST' }); }

@@ -204,3 +204,82 @@ test('parseSeasonRangeFromTitle extracts a season range from the title, or null 
   assert.equal(parseSeasonRangeFromTitle('Some Random Movie (2026)'), null);
 });
 
+// Real markup from a live pahe.ink post where the quality/size heading is
+// PLAIN TEXT, not wrapped in <b>/<strong> (a second layout pahe.ink uses
+// alongside the bold one — confirmed present on ~1/3 of a live sample).
+const PLAIN_TEXT_LAYOUT_SAMPLE = `
+  <div class="box download"><div class="box-inner-block">
+    480p x264 | 400 MB<br />
+    <a href="https://teknoasian.com/?ht=plain480">GD</a>
+    &nbsp;<br />&nbsp;<br />
+    720p x264 | 850 MB<br />
+    <a href="https://teknoasian.com/?ht=plain720">GD</a>
+  </div></div>
+`;
+
+test('parseDownloadOptions detects quality/size from a plain-text heading (no <b>/<strong> wrapper)', () => {
+  const opts = parseDownloadOptions(PLAIN_TEXT_LAYOUT_SAMPLE);
+  assert.equal(opts.length, 2);
+  assert.equal(opts[0].quality, '480p');
+  assert.equal(opts[0].sizeLabel, '400 MB');
+  assert.equal(opts[1].quality, '720p');
+  assert.equal(opts[1].sizeLabel, '850 MB');
+});
+
+test('parseDownloadOptions does not mistake a bare resolution mention in prose for a quality heading', () => {
+  // "Source ....: 1080p ..." in the technical-spec block contains a quality
+  // token but no trailing "| SIZE" — must not become the current label.
+  const html = `
+    <p>Source .........: 1080p AMZN WEB-DL DD+ 2.0 H.264-playWEB<br /></p>
+    <div class="box download"><div class="box-inner-block">
+      480p x264 | 400 MB<br />
+      <a href="https://teknoasian.com/?ht=real480">GD</a>
+    </div></div>
+  `;
+  const opts = parseDownloadOptions(html);
+  assert.equal(opts.length, 1);
+  assert.equal(opts[0].quality, '480p');
+  assert.equal(opts[0].sizeLabel, '400 MB');
+});
+
+// Real markup: a single quality heading covers two differently-sized anchor
+// groups ("Per Episode" vs "Batch"), a pattern common on multi-season posts.
+const MULTI_TIER_SIZE_SAMPLE = `
+  <div class="box download"><div class="box-inner-block">
+    <span><b>Season 1 – 720p x264</b></span> | 23 Eps<br />
+    &nbsp;<br />
+    <b>Per Episode</b> 350 MB<br />
+    <a href="https://teknoasian.com/?ht=perep">PD</a>
+    &nbsp;<br />&nbsp;<br />
+    <b>Batch</b> 7.87 GB<br />
+    <a href="https://teknoasian.com/?ht=batch1">MG</a>
+    <a href="https://teknoasian.com/?ht=batch2">GD</a>
+  </div></div>
+`;
+
+test('parseDownloadOptions tracks size per sub-tier — Per Episode and Batch under the same quality heading get their own sizes', () => {
+  const opts = parseDownloadOptions(MULTI_TIER_SIZE_SAMPLE);
+  assert.equal(opts.length, 3);
+  const perEpisode = opts.find((o) => o.provider === 'PD');
+  const batch = opts.filter((o) => o.provider === 'MG' || o.provider === 'GD');
+  assert.equal(perEpisode.sizeLabel, '350 MB');
+  for (const o of batch) assert.equal(o.sizeLabel, '7.87 GB');
+  // qualityLabel/season stay tied to the outer heading, not the sub-tier label
+  assert.equal(perEpisode.qualityLabel, 'Season 1 – 720p x264');
+  assert.equal(batch[0].qualityLabel, 'Season 1 – 720p x264');
+});
+
+test('parseDownloadOptions handles a per-episode size range ("350-500 MB")', () => {
+  const html = `
+    <div class="box download"><div class="box-inner-block">
+      <b>720p x264</b> | 8 Eps<br />
+      &nbsp;<br />
+      <b>Per Episode</b> 350-500 MB<br />
+      <a href="https://teknoasian.com/?ht=range">GD</a>
+    </div></div>
+  `;
+  const opts = parseDownloadOptions(html);
+  assert.equal(opts.length, 1);
+  assert.equal(opts[0].sizeLabel, '350-500 MB');
+});
+
