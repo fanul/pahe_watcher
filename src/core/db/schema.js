@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS post_options (
   provider_name  TEXT,
   quality        TEXT,
   quality_label  TEXT,
+  season         INTEGER,
   size_label     TEXT,
   url            TEXT,
   host           TEXT
@@ -109,6 +110,20 @@ function migratePostsColumns(db) {
   }
 }
 
+/** Columns added to `post_options` after the initial release — same idempotent ALTER TABLE pattern. */
+const NEW_POST_OPTION_COLUMNS = {
+  season: 'INTEGER',
+};
+
+function migratePostOptionsColumns(db) {
+  const existing = new Set(db.prepare('PRAGMA table_info(post_options)').all().map((r) => r.name));
+  for (const [col, type] of Object.entries(NEW_POST_OPTION_COLUMNS)) {
+    if (!existing.has(col)) {
+      db.exec(`ALTER TABLE post_options ADD COLUMN ${col} ${type}`);
+    }
+  }
+}
+
 /**
  * `posts_fts` columns. Kept as a single source of truth for the CREATE TABLE,
  * the three sync triggers, and the rebuild-migration's repopulate INSERT.
@@ -166,6 +181,7 @@ function migratePostsFts(db) {
 export function applySchema(db) {
   db.exec(SCHEMA_SQL);
   migratePostsColumns(db);
+  migratePostOptionsColumns(db);
   migratePostsFts(db);
 }
 

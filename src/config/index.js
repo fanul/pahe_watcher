@@ -111,6 +111,7 @@ export function loadConfig() {
       backfillIntervalSeconds: envInt('SYNC_BACKFILL_INTERVAL_SECONDS', d.sync.backfillIntervalSeconds),
       deepSyncSweepBatchSize: envInt('SYNC_DEEPSYNC_SWEEP_BATCH_SIZE', d.sync.deepSyncSweepBatchSize),
       metadataBackfillSweepBatchSize: envInt('SYNC_METADATA_BACKFILL_SWEEP_BATCH_SIZE', d.sync.metadataBackfillSweepBatchSize),
+      seriesResyncSweepBatchSize: envInt('SYNC_SERIES_RESYNC_SWEEP_BATCH_SIZE', d.sync.seriesResyncSweepBatchSize),
     },
     store: {
       path: path.resolve(ROOT, envStr('STATE_PATH', d.store.path)),

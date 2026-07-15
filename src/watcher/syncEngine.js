@@ -328,6 +328,30 @@ export class SyncEngine {
     log.info('Metadata backfill sweep complete', { processed: entries.length, remaining });
     return { processed: entries.length, remaining, entries };
   }
+
+  /**
+   * Re-syncs series posts whose title claims more seasons (e.g. "Season
+   * 1-7") than we've confirmed stored (via post_options.season) — i.e.
+   * pahe.ink added a newer season to the post's page since we last synced
+   * it (or we've never synced it since season-tagging was introduced).
+   * Reuses deepSyncPost, whose full re-fetch + markPost's full-replace
+   * options semantics naturally picks up any newly added seasons/links.
+   */
+  async sweepStaleSeriesResync({ batchSize } = {}) {
+    const cfg = this.config.sync || {};
+    batchSize = batchSize ?? cfg.seriesResyncSweepBatchSize ?? 10;
+
+    const ids = this.store.listStaleSeriesPostIds(batchSize);
+    const entries = [];
+    log.info(`Starting series-resync sweep for up to ${batchSize} stale series (remaining stale: ${this.store.countStaleSeries()})...`);
+    for (const id of ids) {
+      const entry = await this.deepSyncPost(id);
+      if (entry) entries.push(entry);
+    }
+    const remaining = this.store.countStaleSeries();
+    log.info('Series-resync sweep complete', { processed: entries.length, remaining });
+    return { processed: entries.length, remaining, entries };
+  }
 }
 
 export default SyncEngine;

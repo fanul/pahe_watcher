@@ -198,6 +198,50 @@ test('sweepMetadataBackfill fills in year/genre/director for posts synced under 
   assert.deepEqual(store.listPostsMissingExtendedMetadata(10), []);
 });
 
+test('sweepStaleSeriesResync re-fetches series posts whose page grew new seasons since our last sync', async (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  // Stored with only seasons 1-3, but pahe.ink's live page (below) now has seasons 1-5.
+  store.markPost({
+    id: 1, title: 'Growing Show Season 1-5 Complete', link: 'https://pahe.ink/growing-show', date: '2026-01-01', isSeries: true,
+    options: [
+      { provider: 'GD', quality: '720p', qualityLabel: 'Season 1 – 720p x264', season: 1, url: 'https://teknoasian.com/?ht=old1' },
+      { provider: 'GD', quality: '720p', qualityLabel: 'Season 3 – 720p x264', season: 3, url: 'https://teknoasian.com/?ht=old3' },
+    ],
+  });
+  // Not stale — up to date.
+  store.markPost({
+    id: 2, title: 'Complete Show Season 1-2 Complete', link: 'https://pahe.ink/complete-show', date: '2026-01-02', isSeries: true,
+    options: [
+      { provider: 'GD', quality: '720p', qualityLabel: 'Season 1 – 720p x264', season: 1, url: 'https://teknoasian.com/?ht=c1' },
+      { provider: 'GD', quality: '720p', qualityLabel: 'Season 2 – 720p x264', season: 2, url: 'https://teknoasian.com/?ht=c2' },
+    ],
+  });
+
+  const liveHtmlById = {
+    1: Array.from({ length: 5 }, (_, i) => `<p><b>Season ${i + 1} – 720p x264</b><br><a href="https://teknoasian.com/?ht=new${i + 1}">GD</a></p>`).join(''),
+  };
+  const client = {
+    async getPost(id) {
+      return { id, date: '2026-01-01T00:00:00', link: 'https://pahe.ink/growing-show', title: 'Growing Show Season 1-5 Complete', contentHtml: liveHtmlById[id] };
+    },
+  };
+  const engine = new SyncEngine({ config: BASE_CONFIG, store, client, queue: fakeQueue() });
+
+  assert.deepEqual(store.listStaleSeriesPostIds(10), [1]);
+  assert.equal(store.countStaleSeries(), 1);
+
+  const result = await engine.sweepStaleSeriesResync({ batchSize: 10 });
+  assert.equal(result.processed, 1);
+  assert.equal(result.remaining, 0);
+
+  const post = store.getPost(1);
+  const seasons = [...new Set(post.options.map((o) => o.season))].sort((a, b) => a - b);
+  assert.deepEqual(seasons, [1, 2, 3, 4, 5]);
+  assert.equal(store.countStaleSeries(), 0);
+});
+
 test('runLivePoll skips auto-resolve for an in-progress series without "Complete" in the title', async (t) => {
   const { store, dir } = tmpStore();
   t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });

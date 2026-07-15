@@ -7,6 +7,7 @@ export function initCrawl(refreshAll) {
   const btnResetCursor = $('#btnResetCursor');
   const btnDeepSyncSweep = $('#btnDeepSyncSweep');
   const btnMetadataBackfillSweep = $('#btnMetadataBackfillSweep');
+  const btnSeriesResyncSweep = $('#btnSeriesResyncSweep');
   const crawlProgress = $('#crawlProgress');
   const crawlResults = $('#crawlResults');
   const crawlMaxPages = $('#crawlMaxPages');
@@ -14,11 +15,14 @@ export function initCrawl(refreshAll) {
   const crawlDeepSync = $('#crawlDeepSync');
   const deepSyncStatus = $('#deepSyncStatus');
   const metadataBackfillStatus = $('#metadataBackfillStatus');
+  const seriesResyncStatus = $('#seriesResyncStatus');
   const deepSyncBatchSize = $('#deepSyncBatchSize');
   const metadataBackfillBatchSize = $('#metadataBackfillBatchSize');
+  const seriesResyncBatchSize = $('#seriesResyncBatchSize');
 
   refreshDeepSyncStatus();
   refreshMetadataBackfillStatus();
+  refreshSeriesResyncStatus();
   refreshCursorStatus();
 
   btnStartCrawl.onclick = async () => {
@@ -89,9 +93,30 @@ export function initCrawl(refreshAll) {
     }
   };
 
+  btnSeriesResyncSweep.onclick = async () => {
+    btnSeriesResyncSweep.disabled = true;
+    const batchSize = +seriesResyncBatchSize.value || 10;
+    try {
+      const res = await api('/sync/series-resync/run', {
+        method: 'POST',
+        body: JSON.stringify({ batchSize }),
+      });
+      accumulated = [...res.entries, ...accumulated];
+      renderCrawlResults();
+      seriesResyncStatus.textContent = `Resynced ${res.processed} series post(s), ${res.remaining} still stale.`;
+    } finally {
+      btnSeriesResyncSweep.disabled = false;
+    }
+  };
+
   async function refreshDeepSyncStatus() {
     const res = await api('/sync/deep-sync/status').catch(() => null);
     if (res) deepSyncStatus.textContent = `${res.pending} post(s) pending deep sync.`;
+  }
+
+  async function refreshSeriesResyncStatus() {
+    const res = await api('/sync/series-resync/status').catch(() => null);
+    if (res) seriesResyncStatus.textContent = `${res.pending} series post(s) missing newer seasons.`;
   }
 
   async function refreshMetadataBackfillStatus() {
@@ -130,7 +155,7 @@ export function initCrawl(refreshAll) {
           <div class="chip-row">
             <div class="chip-info">
               <span class="chip-provider ${o.provider === 'GD' ? 'gd' : ''}">${o.provider}</span>
-              <span class="chip-meta">${o.quality || 'unknown'} · ${codec} · ${size}</span>
+              <span class="chip-meta">${o.season != null ? `S${o.season} · ` : ''}${o.quality || 'unknown'} · ${codec} · ${size}</span>
             </div>
             <button type="button" class="chip-action" data-post="${r.id}" data-idx="${realIdx}" style="background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;">Resolve ↗</button>
           </div>

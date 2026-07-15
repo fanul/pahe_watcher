@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createLogger } from './logger.js';
 import { applySchema } from './db/schema.js';
 import { migrateJsonStateIfNeeded } from './db/migrateJsonState.js';
+import { parseSeasonRangeFromTitle } from '../parser/postParser.js';
 
 const log = createLogger('store');
 
@@ -62,8 +63,8 @@ export class Store {
       allPostOptions: this.db.prepare('SELECT * FROM post_options ORDER BY post_id, sort_order'),
       deletePostOptions: this.db.prepare('DELETE FROM post_options WHERE post_id = ?'),
       insertOption: this.db.prepare(
-        `INSERT INTO post_options (post_id, sort_order, provider, provider_name, quality, quality_label, size_label, url, host)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO post_options (post_id, sort_order, provider, provider_name, quality, quality_label, season, size_label, url, host)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ),
       upsertPost: this.db.prepare(`
         INSERT INTO posts (id, title, link, date, seen_at, poster, rating, synopsis, is_series, page_found, content_synced_at,
@@ -101,6 +102,18 @@ export class Store {
       ),
       distinctYears: this.db.prepare('SELECT DISTINCT year FROM posts WHERE year IS NOT NULL ORDER BY year DESC'),
       distinctGenres: this.db.prepare("SELECT DISTINCT genre FROM posts WHERE genre IS NOT NULL AND genre != ''"),
+      // LEFT JOIN (not INNER) so series posts with no season-tagged options
+      // yet — either never re-synced since the `season` column was added, or
+      // genuinely have none — still appear, with max_season NULL. That NULL
+      // is treated as "not yet confirmed complete" by _computeStaleSeriesIds.
+      seriesWithSeasons: this.db.prepare(`
+        SELECT posts.id, posts.title, MAX(po.season) AS max_season
+        FROM posts
+        LEFT JOIN post_options po ON po.post_id = posts.id
+        WHERE posts.is_series = 1
+        GROUP BY posts.id
+        ORDER BY posts.id ASC
+      `),
     };
 
     log.info('SQLite store ready', { path: sqlitePath, posts: this.countPosts(), jobs: this.countJobs() });
@@ -190,7 +203,7 @@ export class Store {
         this._stmt.insertOption.run(
           id, i,
           opt.provider ?? null, opt.providerName ?? null, opt.quality ?? null,
-          opt.qualityLabel ?? null, opt.sizeLabel ?? null, opt.url ?? null, opt.host ?? null,
+          opt.qualityLabel ?? null, opt.season ?? null, opt.sizeLabel ?? null, opt.url ?? null, opt.host ?? null,
         );
       });
     });
@@ -360,6 +373,35 @@ export class Store {
     return this._stmt.countMissingExtendedMetadata.get().n;
   }
 
+  /**
+   * Series posts whose title claims a multi-season range (e.g. "Season 1-7")
+   * that goes further than the highest season actually found among their
+   * stored options — i.e. pahe.ink added a newer season to the post's page
+   * after we last deep-synced it, OR the post has never been (re-)synced
+   * since the `season` column was introduced (max_season NULL counts as
+   * "not yet confirmed complete", so it's included too). Detected purely
+   * from already-stored data (title + post_options.season), no live fetch.
+   * Titles with a single season ("Season 3") are skipped — nothing to
+   * compare, since a single-season post's options never carry `season`.
+   */
+  _computeStaleSeriesIds() {
+    const staleIds = [];
+    for (const row of this._stmt.seriesWithSeasons.all()) {
+      const range = parseSeasonRangeFromTitle(row.title);
+      if (!range || range.min === range.max) continue;
+      if (row.max_season == null || row.max_season < range.max) staleIds.push(row.id);
+    }
+    return staleIds;
+  }
+
+  listStaleSeriesPostIds(limit = 20) {
+    return this._computeStaleSeriesIds().slice(0, limit);
+  }
+
+  countStaleSeries() {
+    return this._computeStaleSeriesIds().length;
+  }
+
   /** Distinct genre/year values present in the archive, for populating filter dropdowns. */
   getPostFacets() {
     const years = this._stmt.distinctYears.all().map((r) => r.year);
@@ -411,6 +453,7 @@ export class Store {
       providerName: row.provider_name,
       quality: row.quality,
       qualityLabel: row.quality_label,
+      season: row.season ?? null,
       sizeLabel: row.size_label,
       url: row.url,
       host: row.host,

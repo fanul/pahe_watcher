@@ -101,6 +101,11 @@ export class Watcher {
     return this.syncEngine.sweepMetadataBackfill(opts);
   }
 
+  /** Re-sync series posts whose page has grown more seasons than we've confirmed stored. */
+  runSeriesResyncSweep(opts) {
+    return this.syncEngine.sweepStaleSeriesResync(opts);
+  }
+
   /** Explicit control over the backfill cursor (page/direction). */
   resetBackfill(opts) {
     return this.syncEngine.resetBackfillCursor(opts);

@@ -69,7 +69,8 @@
     "backfillAutoRun": false,
     "backfillIntervalSeconds": 60,
     "deepSyncSweepBatchSize": 20,
-    "metadataBackfillSweepBatchSize": 20
+    "metadataBackfillSweepBatchSize": 20,
+    "seriesResyncSweepBatchSize": 10
   },
   "store": {
     "path": "./data/state.json",

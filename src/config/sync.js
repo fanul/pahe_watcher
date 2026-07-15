@@ -7,6 +7,7 @@ export function getPublicSyncConfig(runtime) {
     backfillIntervalSeconds: runtime.sync.backfillIntervalSeconds,
     deepSyncSweepBatchSize: runtime.sync.deepSyncSweepBatchSize,
     metadataBackfillSweepBatchSize: runtime.sync.metadataBackfillSweepBatchSize,
+    seriesResyncSweepBatchSize: runtime.sync.seriesResyncSweepBatchSize,
   };
 }
 

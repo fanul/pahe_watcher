@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDownloadOptions, selectOptions, checkIsSeries, parsePostMetadata } from '../src/parser/postParser.js';
+import { parseDownloadOptions, selectOptions, checkIsSeries, parsePostMetadata, parseSeasonRangeFromTitle } from '../src/parser/postParser.js';
 
 // Real markup captured from a live pahe.ink movie post (imdbwp IMDb-widget layout).
 const MOVIE_METADATA_SAMPLE = `
@@ -170,5 +170,37 @@ test('detects series and filters by preferredSeriesType (batch)', () => {
   });
   assert.equal(selectedEpisode.length, 1);
   assert.equal(selectedEpisode[0].url, 'https://teknoasian.com/?ht=ep1');
+});
+
+// Mirrors pahe.ink's real multi-season "Complete" season-tabs layout (e.g.
+// "The Mentalist Season 1-7 Complete"): each season's quality heading is
+// tagged "Season N – ...", repeated per season/quality tier.
+const SEASON_TABS_SAMPLE = `
+  <div class="box download"><div class="box-inner-block">
+    <span><b>Season 1 – 720p x264</b></span> | 23 Eps<br>
+    <a href="https://teknoasian.com/?ht=s1_720p_gd1">GD</a>
+  </div></div>
+  <div class="box download"><div class="box-inner-block">
+    <span><b>Season 2 – 720p x264</b></span> | 23 Eps<br>
+    <a href="https://teknoasian.com/?ht=s2_720p_gd1">GD</a>
+  </div></div>
+`;
+
+test('parseDownloadOptions tags each option with its season from multi-season "Complete" layouts', () => {
+  const opts = parseDownloadOptions(SEASON_TABS_SAMPLE);
+  assert.equal(opts.length, 2);
+  assert.equal(opts[0].season, 1);
+  assert.equal(opts[1].season, 2);
+});
+
+test('parseDownloadOptions leaves season null for single-season (non-tabbed) posts', () => {
+  assert.equal(parseDownloadOptions(SAMPLE)[0].season, null);
+});
+
+test('parseSeasonRangeFromTitle extracts a season range from the title, or null if absent', () => {
+  assert.deepEqual(parseSeasonRangeFromTitle('The Mentalist Season 1-7 Complete WEB-HD 720p & 1080p'), { min: 1, max: 7 });
+  assert.deepEqual(parseSeasonRangeFromTitle('Star City Season 1 Complete WEB-DL 720p & 1080p'), { min: 1, max: 1 });
+  assert.deepEqual(parseSeasonRangeFromTitle('Foo Season 1–7 Complete'), { min: 1, max: 7 }); // en-dash range separator
+  assert.equal(parseSeasonRangeFromTitle('Some Random Movie (2026)'), null);
 });
 

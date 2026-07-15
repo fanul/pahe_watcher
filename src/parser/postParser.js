@@ -84,11 +84,18 @@ export function parseDownloadOptions(html) {
       currentSize = m;
     }
 
+    // Multi-season "Complete" archive posts tag each quality heading with its
+    // season, e.g. "Season 1 – 720p x264" (pahe.ink's season-tabs layout).
+    // Single-season posts have no such prefix — season stays null for them.
+    const seasonMatch = currentLabel && currentLabel.match(/season\s*(\d+)/i);
+    const season = seasonMatch ? parseInt(seasonMatch[1], 10) : null;
+
     options.push({
       provider: code,
       providerName: PROVIDER_NAMES[code] || code,
       quality: currentQuality,
       qualityLabel: currentLabel,
+      season,
       sizeLabel: currentSize,
       url: href,
       host: hostOf(href),
@@ -118,6 +125,20 @@ function dedupe(options) {
     seen.add(k);
     return true;
   });
+}
+
+/**
+ * Extracts the season range a post's TITLE claims to cover, e.g.
+ * "The Mentalist Season 1-7 Complete" -> {min:1, max:7}, "Foo Season 3" ->
+ * {min:3, max:3}. Returns null when the title doesn't declare a season
+ * range at all (nothing to compare against for staleness detection).
+ */
+export function parseSeasonRangeFromTitle(title) {
+  const m = (title || '').match(/season\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
+  if (!m) return null;
+  const min = parseInt(m[1], 10);
+  const max = m[2] ? parseInt(m[2], 10) : min;
+  return { min, max };
 }
 
 /**

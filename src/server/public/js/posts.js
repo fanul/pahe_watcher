@@ -150,7 +150,7 @@ export function renderPosts(state) {
         <div class="chip-row">
           <div class="chip-info">
             <span class="chip-provider ${o.provider === 'GD' ? 'gd' : ''}">${o.provider}</span>
-            <span class="chip-meta">${o.quality || 'unknown'} · ${codec} · ${size}</span>
+            <span class="chip-meta">${o.season != null ? `S${o.season} · ` : ''}${o.quality || 'unknown'} · ${codec} · ${size}</span>
           </div>
           <div style="display: flex; align-items: center; gap: 4px;">
             ${openBtn}

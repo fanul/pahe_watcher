@@ -160,6 +160,18 @@ export function createApiRouter(app) {
   router.get('/sync/metadata-backfill/status', (req, res) => {
     res.json({ pending: store.countPostsMissingExtendedMetadata() });
   });
+  router.post('/sync/series-resync/run', async (req, res) => {
+    try {
+      const { batchSize } = req.body || {};
+      const result = await watcher.runSeriesResyncSweep({ batchSize });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  router.get('/sync/series-resync/status', (req, res) => {
+    res.json({ pending: store.countStaleSeries() });
+  });
 
   // ── jobs ──
   // Paginated, same reasoning as /posts. Returns { items, total }.

@@ -361,3 +361,48 @@ test('listPostsMissingExtendedMetadata / countPostsMissingExtendedMetadata: sync
   assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [5]);
   assert.equal(store.countPostsMissingExtendedMetadata(), 1);
 });
+
+test('listStaleSeriesPostIds / countStaleSeries: detects series whose title claims more seasons than are stored', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+
+  // Complete, up to date: title says 1-2, season 2 is present.
+  store.markPost({
+    id: 10, title: 'Fully Synced Show Season 1-2 Complete', link: 'l10', date: 'd', isSeries: true,
+    options: [
+      { provider: 'GD', quality: '720p', qualityLabel: 'Season 1 – 720p x264', season: 1, url: 'u10a' },
+      { provider: 'GD', quality: '720p', qualityLabel: 'Season 2 – 720p x264', season: 2, url: 'u10b' },
+    ],
+  });
+  // Stale: title says 1-7, but only season 1-3 are stored (site added seasons 4-7 since our last sync).
+  store.markPost({
+    id: 11, title: 'Growing Show Season 1-7 Complete', link: 'l11', date: 'd', isSeries: true,
+    options: [
+      { provider: 'GD', quality: '720p', qualityLabel: 'Season 1 – 720p x264', season: 1, url: 'u11a' },
+      { provider: 'GD', quality: '720p', qualityLabel: 'Season 3 – 720p x264', season: 3, url: 'u11b' },
+    ],
+  });
+  // Never confirmed: title says 1-5, but this post predates the `season` column (options carry no season at all).
+  store.markPost({
+    id: 12, title: 'Old Sync Show Season 1-5 Complete', link: 'l12', date: 'd', isSeries: true,
+    options: [{ provider: 'GD', quality: '720p', qualityLabel: '720p x264', url: 'u12a' }], // no season tag
+  });
+  // Single season — nothing to compare (title range min === max), never flagged.
+  store.markPost({
+    id: 13, title: 'Single Season Show Season 1 Complete', link: 'l13', date: 'd', isSeries: true,
+    options: [{ provider: 'GD', quality: '720p', qualityLabel: '720p x264', url: 'u13a' }],
+  });
+  // A movie — not a series at all, must never be considered.
+  store.markPost({ id: 14, title: 'Some Movie (2026)', link: 'l14', date: 'd', isSeries: false, options: [{ provider: 'GD', quality: '720p', url: 'u14a' }] });
+
+  assert.deepEqual(store.listStaleSeriesPostIds(10).sort(), [11, 12]);
+  assert.equal(store.countStaleSeries(), 2);
+
+  // Re-syncing post 11 with all 7 seasons present clears it from the stale list.
+  store.markPost({
+    ...store.getPost(11), id: 11,
+    options: Array.from({ length: 7 }, (_, i) => ({ provider: 'GD', quality: '720p', qualityLabel: `Season ${i + 1} – 720p x264`, season: i + 1, url: `u11-${i + 1}` })),
+  });
+  assert.deepEqual(store.listStaleSeriesPostIds(10), [12]);
+  assert.equal(store.countStaleSeries(), 1);
+});
