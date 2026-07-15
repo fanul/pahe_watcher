@@ -8,6 +8,15 @@ import { populateGdflixSettings, serializeGdflixSettings, initGdflixSettings } f
 import { populateGoogleSettings, serializeGoogleSettings } from './settings/google.js';
 import { populateSyncSettings, serializeSyncSettings } from './settings/sync.js';
 
+export function applyLayoutMode() {
+  const mode = localStorage.getItem('layoutMode') || 'stay-on-top';
+  if (mode === 'stay-on-top') {
+    document.body.classList.add('layout-stay-on-top');
+  } else {
+    document.body.classList.remove('layout-stay-on-top');
+  }
+}
+
 export function initSettings(refreshAll) {
   const providerSelect = $('#captchaProviderSelect');
   const f = $('#settingsForm');
@@ -26,6 +35,13 @@ export function initSettings(refreshAll) {
     populateGdflixSettings(f, cfg);
     populateGoogleSettings(f, cfg);
     populateSyncSettings(f, cfg);
+
+    // Populate layout mode
+    const layoutMode = localStorage.getItem('layoutMode') || 'stay-on-top';
+    const layoutSelect = f.querySelector('[name="layoutStickyMode"]');
+    if (layoutSelect) {
+      layoutSelect.value = layoutMode;
+    }
 
     $('#sheetInfo').textContent = cfg.sheets.configured ? `${cfg.sheets.sheetId} / ${cfg.sheets.tab}` : 'not configured';
     $('#settingsDialog').showModal();
@@ -46,6 +62,13 @@ export function initSettings(refreshAll) {
       sheets: serializeSheetsSettings(f),
       sync: serializeSyncSettings(f)
     };
+
+    // Save layout mode
+    const layoutSelect = f.querySelector('[name="layoutStickyMode"]');
+    if (layoutSelect) {
+      localStorage.setItem('layoutMode', layoutSelect.value);
+      applyLayoutMode();
+    }
 
     await api('/config', { method: 'PATCH', body: JSON.stringify(patch) });
     refreshAll();

@@ -5,7 +5,7 @@ import { renderStatus } from './js/status.js';
 import { loadPosts, renderPosts, notePostInserted, initPostFacets, markPostsWithDeadJob } from './js/posts.js';
 import { loadJobs, renderJobs, noteJobInserted, noteJobsRemoved, resetJobsCleared } from './js/jobs.js';
 import { initCrawl, updateCrawlProgress } from './js/crawl.js';
-import { initSettings } from './js/settings.js';
+import { initSettings, applyLayoutMode } from './js/settings.js';
 import { initCaptcha, showCaptcha } from './js/captcha.js';
 import { initManualJob } from './js/manual.js';
 import { SearchableSelect } from './js/searchableSelect.js';
@@ -252,6 +252,7 @@ if (logWidget && logWidgetHeader && btnToggleLogWidget) {
 }
 
 // ── boot ──
+applyLayoutMode();
 initCrawl(refreshAll);
 initSettings(refreshAll);
 initCaptcha();

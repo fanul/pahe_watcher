@@ -977,4 +977,81 @@ legend {
   color: #fff;
 }
 
+/* Layout Stay-on-Top (Sticky Filters & Forms) Mode */
+body.layout-stay-on-top {
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+body.layout-stay-on-top .topbar {
+  flex-shrink: 0;
+}
+
+body.layout-stay-on-top main.grid {
+  flex: 1;
+  overflow: hidden;
+  padding: 12px 20px 20px;
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  grid-template-rows: 1fr;
+  align-items: stretch;
+  gap: 20px;
+  max-height: calc(100vh - 65px);
+  height: calc(100vh - 65px);
+}
+
+body.layout-stay-on-top .panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+body.layout-stay-on-top .tab-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+body.layout-stay-on-top .tab-content.hidden {
+  display: none !important;
+}
+
+body.layout-stay-on-top .filter-bar {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+body.layout-stay-on-top .crawl-controls {
+  flex-shrink: 0;
+}
+
+body.layout-stay-on-top #manualJobForm {
+  flex-shrink: 0;
+}
+
+body.layout-stay-on-top .list,
+body.layout-stay-on-top #posts.list,
+body.layout-stay-on-top #crawlResults.list,
+body.layout-stay-on-top #jobs.list {
+  flex: 1;
+  max-height: none !important;
+  overflow-y: auto;
+}
+
+@media (max-width: 1100px) {
+  body.layout-stay-on-top main.grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+    overflow-y: auto;
+  }
+}
+
+
 
