@@ -17,6 +17,7 @@
   },
   "bypass": {
     "browserMode": "auto",
+    "cdpEnabled": false,
     "cdpUrl": "",
     "initialPageDelaySeconds": 1.5,
     "concurrency": 1,

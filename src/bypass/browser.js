@@ -57,8 +57,9 @@ export class BrowserManager {
 
     const stealth = this.config?.bypass?.stealth || {};
     const cdpUrl = this.config?.bypass?.cdpUrl;
+    const cdpEnabled = this.config?.bypass?.cdpEnabled;
 
-    if (cdpUrl) {
+    if (cdpEnabled && cdpUrl) {
       log.info(`Connecting to remote browser via CDP: ${cdpUrl}`);
       try {
         this._remoteBrowser = await chromium.connectOverCDP(cdpUrl);

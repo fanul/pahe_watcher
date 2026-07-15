@@ -2,6 +2,7 @@ import { splitList } from '../utils.js';
 
 export function populateBypassSettings(form, cfg) {
   form.browserMode.value = cfg.bypass.browserMode;
+  form.cdpEnabled.checked = cfg.bypass.cdpEnabled === true;
   form.cdpUrl.value = cfg.bypass.cdpUrl || '';
   form.initialPageDelaySeconds.value = cfg.bypass.initialPageDelaySeconds || 1.5;
   form.speedUpExclusions.value = (cfg.bypass.speedUpExclusions || []).join(', ');
@@ -23,6 +24,7 @@ export function populateBypassSettings(form, cfg) {
 export function serializeBypassSettings(form) {
   return {
     browserMode: form.browserMode.value,
+    cdpEnabled: form.cdpEnabled.checked,
     cdpUrl: form.cdpUrl.value.trim(),
     initialPageDelaySeconds: parseFloat(form.initialPageDelaySeconds.value) || 1.5,
     speedUpExclusions: splitList(form.speedUpExclusions.value),

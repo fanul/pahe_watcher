@@ -60,6 +60,7 @@ export async function updateConfig(runtime, store, sheets, bypass, watcher, patc
   if (patch?.bypass) {
     if (
       patch.bypass.browserMode !== undefined || 
+      patch.bypass.cdpEnabled !== undefined ||
       patch.bypass.cdpUrl !== undefined ||
       patch.bypass.initialPageDelaySeconds !== undefined ||
       patch.bypass.stealth !== undefined ||
