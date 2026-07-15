@@ -84,27 +84,31 @@ test('retry() allows manually overriding a dead job (unlike retryAll, which excl
   assert.equal(store.getJob('dead-1').status, JobStatus.QUEUED);
 });
 
-test('markDead flags a done/failed job as dead — for links the automatic detector missed', (t) => {
+test('markDead flags a done/failed/cancelled job as dead — for links the automatic detector missed', (t) => {
   const { store, dir } = tmpStore();
   t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
 
   const queue = new JobQueue({ store, concurrency: 1, maxRetries: 2 });
   store.upsertJob({ id: 'done-1', status: JobStatus.DONE, createdAt: 'd', updatedAt: 'd', postLink: 'https://pahe.ink/p', title: 't' });
   store.upsertJob({ id: 'failed-1', status: JobStatus.FAILED, createdAt: 'd', updatedAt: 'd', postLink: 'https://pahe.ink/p2', title: 't2' });
+  store.upsertJob({ id: 'cancelled-1', status: JobStatus.CANCELLED, createdAt: 'd', updatedAt: 'd', postLink: 'https://pahe.ink/p3', title: 't3' });
 
   assert.equal(queue.markDead('done-1'), true);
   assert.equal(store.getJob('done-1').status, JobStatus.DEAD);
 
   assert.equal(queue.markDead('failed-1'), true);
   assert.equal(store.getJob('failed-1').status, JobStatus.DEAD);
+
+  assert.equal(queue.markDead('cancelled-1'), true);
+  assert.equal(store.getJob('cancelled-1').status, JobStatus.DEAD);
 });
 
-test('markDead refuses jobs that are not done/failed (queued/running/cancelled/already-dead)', (t) => {
+test('markDead refuses jobs that are not done/failed/cancelled (queued/running/already-dead)', (t) => {
   const { store, dir } = tmpStore();
   t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
 
   const queue = new JobQueue({ store, concurrency: 1, maxRetries: 2 });
-  for (const status of [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.CANCELLED, JobStatus.DEAD]) {
+  for (const status of [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.DEAD]) {
     store.upsertJob({ id: `job-${status}`, status, createdAt: 'd', updatedAt: 'd', postLink: 'https://pahe.ink/p', title: 't' });
     assert.equal(queue.markDead(`job-${status}`), false, `expected markDead to refuse a ${status} job`);
     assert.equal(store.getJob(`job-${status}`).status, status, `${status} job's status should be unchanged`);
@@ -116,4 +120,28 @@ test('markDead returns false for an unknown job id', (t) => {
   t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   const queue = new JobQueue({ store, concurrency: 1, maxRetries: 2 });
   assert.equal(queue.markDead('does-not-exist'), false);
+});
+
+test('unmarkDead reverses a dead marking back to failed', (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const queue = new JobQueue({ store, concurrency: 1, maxRetries: 2 });
+  store.upsertJob({ id: 'dead-1', status: JobStatus.DEAD, createdAt: 'd', updatedAt: 'd', postLink: 'https://pahe.ink/p', title: 't' });
+
+  assert.equal(queue.unmarkDead('dead-1'), true);
+  assert.equal(store.getJob('dead-1').status, JobStatus.FAILED);
+});
+
+test('unmarkDead refuses jobs that are not dead, and unknown ids', (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const queue = new JobQueue({ store, concurrency: 1, maxRetries: 2 });
+  for (const status of [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED]) {
+    store.upsertJob({ id: `job-${status}`, status, createdAt: 'd', updatedAt: 'd', postLink: 'https://pahe.ink/p', title: 't' });
+    assert.equal(queue.unmarkDead(`job-${status}`), false, `expected unmarkDead to refuse a ${status} job`);
+    assert.equal(store.getJob(`job-${status}`).status, status, `${status} job's status should be unchanged`);
+  }
+  assert.equal(queue.unmarkDead('does-not-exist'), false);
 });

@@ -134,12 +134,21 @@ export class JobQueue {
     return false;
   }
 
-  /** Manually flag a done/failed job as dead — for links the bypass engine's automatic phrase-matcher didn't catch but the user has confirmed are actually dead. */
+  /** Manually flag a done/failed/cancelled job as dead — for links the bypass engine's automatic phrase-matcher didn't catch but the user has confirmed are actually dead. */
   markDead(jobId) {
     const job = this.store.getJob(jobId);
     if (!job) return false;
-    if (![JobStatus.DONE, JobStatus.FAILED].includes(job.status)) return false;
+    if (![JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED].includes(job.status)) return false;
     this._update(job, { status: JobStatus.DEAD, error: job.error || 'Manually marked dead' });
+    return true;
+  }
+
+  /** Reverse a manual (or automatic) dead marking — puts the job back to failed so it can be retried/reviewed. */
+  unmarkDead(jobId) {
+    const job = this.store.getJob(jobId);
+    if (!job) return false;
+    if (job.status !== JobStatus.DEAD) return false;
+    this._update(job, { status: JobStatus.FAILED });
     return true;
   }
 

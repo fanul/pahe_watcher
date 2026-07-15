@@ -263,6 +263,33 @@ export function createApiRouter(app) {
   router.post('/jobs/:id/mark-dead', (req, res) => {
     res.json({ ok: queue.markDead(req.params.id) });
   });
+  router.post('/jobs/:id/unmark-dead', (req, res) => {
+    res.json({ ok: queue.unmarkDead(req.params.id) });
+  });
+
+  // Job-centric dead-link report: builds the comment text straight from the
+  // job's own fields (no post_options lookup needed — a manually-created job
+  // may not even correspond to a tracked post_options row).
+  router.post('/jobs/:id/report-dead-link', (req, res) => {
+    const job = store.getJob(req.params.id);
+    if (!job) return res.status(404).json({ error: 'not found' });
+    const template = runtime.deadLinkReport?.reportCommentTemplate
+      || 'Link: {postLink} – Info: {providerName} {quality} {codec} has been deleted, please add a new one';
+    const commentText = renderReportTemplate(template, {
+      post: { link: job.postLink || '', title: job.title || '' },
+      option: { provider: job.provider, providerName: job.provider, quality: job.quality, qualityLabel: job.qualityLabel },
+    });
+    res.json({ commentText, postLink: job.postLink || '' });
+  });
+
+  // Persists the report against the matching post_options row, resolved via
+  // the job's postLink + url (jobs don't reliably carry a postId).
+  router.post('/jobs/:id/mark-reported', (req, res) => {
+    const job = store.getJob(req.params.id);
+    if (!job) return res.status(404).json({ error: 'not found' });
+    const ok = store.markOptionReportedByLink(job.postLink || '', job.url);
+    res.json({ ok });
+  });
   router.post('/jobs/:id/cancel', (req, res) => {
     res.json({ ok: queue.cancel(req.params.id) });
   });

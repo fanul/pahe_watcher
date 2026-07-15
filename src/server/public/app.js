@@ -243,7 +243,9 @@ document.body.addEventListener('click', async (e) => {
   if (t.dataset.resumeJob) { await api(`/jobs/${t.dataset.resumeJob}/resume`, { method: 'POST' }); }
   if (t.dataset.deleteJob) { await api(`/jobs/${t.dataset.deleteJob}`, { method: 'DELETE' }); }
   if (t.dataset.markDead) { await api(`/jobs/${t.dataset.markDead}/mark-dead`, { method: 'POST' }); }
+  if (t.dataset.unmarkDead) { await api(`/jobs/${t.dataset.unmarkDead}/unmark-dead`, { method: 'POST' }); }
   if (t.dataset.reportPost) { await openReportDialog(t.dataset.reportPost, t.dataset.reportUrl); }
+  if (t.dataset.reportJob) { await openJobReportDialog(t.dataset.reportJob); }
   if (t.dataset.post != null && t.dataset.idx != null) {
     const post = state.posts.find((p) => String(p.id) === t.dataset.post);
     const opt = post?.options?.[+t.dataset.idx];
@@ -296,12 +298,24 @@ $('#btnClearAllJobs').onclick = async () => {
 // ── dead-link reporting (semi-automated — prepares the comment text, the
 // user solves the captcha and submits it themselves on pahe.ink) ──
 const reportDialog = $('#reportDialog');
-let reportTarget = null; // { postId, url }
+let reportTarget = null; // { kind: 'post', postId, url } | { kind: 'job', jobId }
 
 async function openReportDialog(postId, url) {
   try {
     const res = await api(`/posts/${postId}/report-dead-link`, { method: 'POST', body: JSON.stringify({ url }) });
-    reportTarget = { postId, url };
+    reportTarget = { kind: 'post', postId, url };
+    $('#reportCommentText').value = res.commentText;
+    $('#reportPostLink').href = res.postLink;
+    reportDialog.showModal();
+  } catch (err) {
+    appendLog({ ts: '', level: 'error', scope: 'ui', msg: `Failed to prepare dead-link report: ${err.message}` });
+  }
+}
+
+async function openJobReportDialog(jobId) {
+  try {
+    const res = await api(`/jobs/${jobId}/report-dead-link`, { method: 'POST' });
+    reportTarget = { kind: 'job', jobId };
     $('#reportCommentText').value = res.commentText;
     $('#reportPostLink').href = res.postLink;
     reportDialog.showModal();
@@ -313,6 +327,11 @@ async function openReportDialog(postId, url) {
 $('#btnReportCancel')?.addEventListener('click', () => reportDialog.close());
 $('#btnMarkReported')?.addEventListener('click', async () => {
   if (!reportTarget) return;
+  if (reportTarget.kind === 'job') {
+    await api(`/jobs/${reportTarget.jobId}/mark-reported`, { method: 'POST' });
+    reportDialog.close();
+    return;
+  }
   const { postId, url } = reportTarget;
   const updatedPost = await api(`/posts/${postId}/mark-reported`, { method: 'POST', body: JSON.stringify({ url }) });
   const opt = updatedPost.options?.find((o) => o.url === url);

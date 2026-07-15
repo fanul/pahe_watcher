@@ -452,3 +452,64 @@ test('markOptionReported persists dead_reported_at on the matching option and su
   // A different option on the same post is unaffected.
   assert.equal(store.getPost(1).options.find((o) => o.url === 'u2').deadReportedAt, null);
 });
+
+test('reopening a Store retroactively computes metadata_complete for posts synced before that column existed', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pahe-store-test-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const sqlitePath = path.join(dir, 'test.db');
+
+  {
+    const store = new Store({ sqlitePath, jsonPath: path.join(dir, 'no.json') });
+    // markPost without metadataComplete (undefined) simulates a post synced by
+    // an older parser version — full data present, but the flag was never set.
+    store.markPost({
+      id: 1, title: 'Fully Populated Old Post', link: 'l1', date: 'd', synopsis: 'A synopsis',
+      poster: 'https://example.com/p.jpg', rating: '7.5', year: 1991, genre: 'Action, Drama',
+      director: 'Some Director', actors: 'Actor One, Actor Two',
+      options: [{ provider: 'GD', quality: '720p', url: 'u1' }],
+    });
+    // A genuinely incomplete post — missing rating and actors.
+    store.markPost({
+      id: 2, title: 'Genuinely Incomplete Post', link: 'l2', date: 'd', synopsis: 'A synopsis',
+      poster: 'https://example.com/p2.jpg', year: 2000, genre: 'Comedy', director: 'Someone',
+      options: [{ provider: 'GD', quality: '720p', url: 'u2' }],
+    });
+    assert.equal(store.getPost(1).metadataComplete, false); // not yet backfilled
+    store.close();
+  }
+
+  // Reopening the same DB file (simulating an app restart) triggers the retroactive backfill.
+  {
+    const store = new Store({ sqlitePath, jsonPath: path.join(dir, 'no.json') });
+    assert.equal(store.getPost(1).metadataComplete, true);
+    assert.equal(store.getPost(2).metadataComplete, false);
+    store.close();
+  }
+
+  // A third open is a no-op (idempotent) — nothing left to backfill, values unchanged.
+  {
+    const store = new Store({ sqlitePath, jsonPath: path.join(dir, 'no.json') });
+    assert.equal(store.getPost(1).metadataComplete, true);
+    assert.equal(store.getPost(2).metadataComplete, false);
+    store.close();
+  }
+});
+
+test('markOptionReportedByLink resolves the post via its link (for jobs that lack a reliable postId) and persists dead_reported_at', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  assert.equal(store.getPost(1).options.find((o) => o.url === 'u1').deadReportedAt, null);
+
+  const ok = store.markOptionReportedByLink('l1', 'u1');
+  assert.equal(ok, true);
+  assert.ok(store.getPost(1).options.find((o) => o.url === 'u1').deadReportedAt);
+
+  // A different option on the same post is unaffected.
+  assert.equal(store.getPost(1).options.find((o) => o.url === 'u2').deadReportedAt, null);
+
+  // Unknown link/url combos are a no-op, not a throw.
+  assert.equal(store.markOptionReportedByLink('does-not-exist', 'u1'), false);
+  assert.equal(store.markOptionReportedByLink('l1', 'does-not-exist'), false);
+});

@@ -5,6 +5,7 @@ import { createLogger } from './logger.js';
 import { applySchema } from './db/schema.js';
 import { migrateJsonStateIfNeeded } from './db/migrateJsonState.js';
 import { parseSeasonRangeFromTitle } from '../parser/postParser.js';
+import { isMetadataComplete } from '../parser/metadata/index.js';
 
 const log = createLogger('store');
 
@@ -48,6 +49,7 @@ export class Store {
     this.db = new DatabaseSync(sqlitePath);
     applySchema(this.db);
     migrateJsonStateIfNeeded(this.db, jsonPath, log);
+    this._backfillMetadataCompleteFlag();
 
     this._stmt = {
       hasSeenPost: this.db.prepare('SELECT 1 FROM posts WHERE id = ?'),
@@ -71,6 +73,11 @@ export class Store {
       ),
       markOptionReported: this.db.prepare(
         'UPDATE post_options SET dead_reported_at = ? WHERE post_id = ? AND url = ?',
+      ),
+      // Jobs carry postLink, not always a reliable postId (manually-created jobs
+      // often leave postId unset) — resolve the post via its link instead.
+      markOptionReportedByLink: this.db.prepare(
+        'UPDATE post_options SET dead_reported_at = ? WHERE url = ? AND post_id = (SELECT id FROM posts WHERE link = ?)',
       ),
       upsertPost: this.db.prepare(`
         INSERT INTO posts (id, title, link, date, seen_at, poster, rating, synopsis, is_series, page_found, content_synced_at,
@@ -124,6 +131,37 @@ export class Store {
     };
 
     log.info('SQLite store ready', { path: sqlitePath, posts: this.countPosts(), jobs: this.countJobs() });
+  }
+
+  /**
+   * One-time (per row) retroactive computation of `metadata_complete` for
+   * posts synced before that column existed. Those rows already have their
+   * poster/rating/synopsis/year/genre/director/creator/actors columns
+   * populated by whatever parser version synced them — this just runs
+   * isMetadataComplete() against data already on disk, no live re-fetch
+   * needed. Naturally idempotent: once a row is set to 0/1 it's never NULL
+   * again (unless deepSyncPost recomputes it fresh), so this is a no-op scan
+   * on every startup after the first.
+   */
+  _backfillMetadataCompleteFlag() {
+    const rows = this.db.prepare(`
+      SELECT id, poster, rating, synopsis, year, genre, duration_minutes, director, creator, actors
+      FROM posts WHERE metadata_complete IS NULL
+    `).all();
+    if (rows.length === 0) return;
+
+    const update = this.db.prepare('UPDATE posts SET metadata_complete = ? WHERE id = ?');
+    this.transaction(() => {
+      for (const row of rows) {
+        const complete = isMetadataComplete({
+          poster: row.poster || '', rating: row.rating || '', synopsis: row.synopsis || '',
+          year: row.year, genre: row.genre || '', durationMinutes: row.duration_minutes,
+          director: row.director || '', creator: row.creator || '', actors: row.actors || '',
+        });
+        update.run(complete ? 1 : 0, row.id);
+      }
+    });
+    log.info(`Backfilled metadata_complete for ${rows.length} already-synced post(s)`);
   }
 
   /**
@@ -404,6 +442,12 @@ export class Store {
   /** Marks a specific download option as having had a dead-link report submitted for it. */
   markOptionReported(postId, url) {
     this._stmt.markOptionReported.run(new Date().toISOString(), Number(postId), url);
+  }
+
+  /** Same as markOptionReported, but resolves the post via its link — for job-centric callers that don't reliably carry a postId. Returns true if a matching post_options row was found and updated. */
+  markOptionReportedByLink(postLink, url) {
+    const result = this._stmt.markOptionReportedByLink.run(new Date().toISOString(), url, postLink);
+    return result.changes > 0;
   }
 
   /**

@@ -63,7 +63,15 @@ export function renderJobs(state) {
     if (['running', 'needs-captcha'].includes(j.status)) {
       acts.push(`<button class="btn small danger" data-cancel="${j.id}">Cancel</button>`);
     }
-    if (['done', 'failed'].includes(j.status)) acts.push(`<button class="btn small danger" data-mark-dead="${j.id}" title="Flag this link as dead — the automatic detector didn't catch it, but you've confirmed it's actually dead">Mark Dead</button>`);
+    const isConfirmedGoodLink = j.status === 'done' && j.result?.linkType === 'google-drive';
+    if (j.status === 'dead') {
+      acts.push(`<button class="btn small muted" data-unmark-dead="${j.id}" title="Undo the dead marking — puts this job back to failed">Unmark Dead</button>`);
+    } else if (['done', 'failed', 'cancelled'].includes(j.status) && !isConfirmedGoodLink) {
+      acts.push(`<button class="btn small danger" data-mark-dead="${j.id}" title="Flag this link as dead — the automatic detector didn't catch it, but you've confirmed it's actually dead">Mark Dead</button>`);
+    }
+    if (['done', 'failed', 'cancelled', 'dead'].includes(j.status) && j.url) {
+      acts.push(`<button class="btn small muted" data-report-job="${j.id}" title="Report this link as dead on pahe.ink">Report</button>`);
+    }
     if (['done', 'failed', 'cancelled', 'dead'].includes(j.status)) acts.push(`<button class="btn small danger-btn" data-delete-job="${j.id}">Delete</button>`);
     const isSheetError = j.status === 'failed' && j.result?.finalUrl;
     const isSuccess = j.status === 'done';
