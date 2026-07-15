@@ -1,6 +1,7 @@
 import { createLogger } from '../core/logger.js';
 import { bus } from '../core/eventBus.js';
-import { parseDownloadOptions, selectOptions, checkIsSeries, parsePostMetadata } from '../parser/postParser.js';
+import { parseDownloadOptions, selectOptions, checkIsSeries } from '../parser/postParser.js';
+import { parsePostMetadata } from '../parser/metadata/index.js';
 
 const log = createLogger('sync');
 
@@ -74,7 +75,7 @@ export class SyncEngine {
     log.info(`Deep-syncing post: "${titleLabel}"...`);
 
     let options = [];
-    let meta = { poster: '', rating: '', synopsis: '', year: null, genre: '', durationMinutes: null, director: '', creator: '', actors: '' };
+    let meta = { poster: '', rating: '', synopsis: '', year: null, genre: '', durationMinutes: null, director: '', creator: '', actors: '', metadataComplete: false };
     let full;
     try {
       full = await this.client.getPost(postId);
@@ -104,6 +105,7 @@ export class SyncEngine {
       director: meta.director,
       creator: meta.creator,
       actors: meta.actors,
+      metadataComplete: meta.metadataComplete,
     };
     const isNew = !existing;
     this.store.markPost(entry);

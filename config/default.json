@@ -72,6 +72,9 @@
     "metadataBackfillSweepBatchSize": 20,
     "seriesResyncSweepBatchSize": 10
   },
+  "deadLinkReport": {
+    "reportCommentTemplate": "Link: {postLink} – Info: {providerName} {quality} {codec} has been deleted, please add a new one"
+  },
   "store": {
     "path": "./data/state.json",
     "sqlitePath": "./data/pahe.db"

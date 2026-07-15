@@ -83,3 +83,37 @@ test('retry() allows manually overriding a dead job (unlike retryAll, which excl
   assert.equal(queue.retry('dead-1'), true);
   assert.equal(store.getJob('dead-1').status, JobStatus.QUEUED);
 });
+
+test('markDead flags a done/failed job as dead — for links the automatic detector missed', (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const queue = new JobQueue({ store, concurrency: 1, maxRetries: 2 });
+  store.upsertJob({ id: 'done-1', status: JobStatus.DONE, createdAt: 'd', updatedAt: 'd', postLink: 'https://pahe.ink/p', title: 't' });
+  store.upsertJob({ id: 'failed-1', status: JobStatus.FAILED, createdAt: 'd', updatedAt: 'd', postLink: 'https://pahe.ink/p2', title: 't2' });
+
+  assert.equal(queue.markDead('done-1'), true);
+  assert.equal(store.getJob('done-1').status, JobStatus.DEAD);
+
+  assert.equal(queue.markDead('failed-1'), true);
+  assert.equal(store.getJob('failed-1').status, JobStatus.DEAD);
+});
+
+test('markDead refuses jobs that are not done/failed (queued/running/cancelled/already-dead)', (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const queue = new JobQueue({ store, concurrency: 1, maxRetries: 2 });
+  for (const status of [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.CANCELLED, JobStatus.DEAD]) {
+    store.upsertJob({ id: `job-${status}`, status, createdAt: 'd', updatedAt: 'd', postLink: 'https://pahe.ink/p', title: 't' });
+    assert.equal(queue.markDead(`job-${status}`), false, `expected markDead to refuse a ${status} job`);
+    assert.equal(store.getJob(`job-${status}`).status, status, `${status} job's status should be unchanged`);
+  }
+});
+
+test('markDead returns false for an unknown job id', (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const queue = new JobQueue({ store, concurrency: 1, maxRetries: 2 });
+  assert.equal(queue.markDead('does-not-exist'), false);
+});

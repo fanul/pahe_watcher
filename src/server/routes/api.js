@@ -2,6 +2,27 @@ import express from 'express';
 import { bus } from '../../core/eventBus.js';
 import { selectOptions, checkIsSeries } from '../../parser/postParser.js';
 
+/** Same derivation the chip UI uses (src/server/public/js/posts.js) to label a link's codec from its raw quality label. */
+function deriveCodec(qualityLabel) {
+  if (/x265|hevc|10bit/i.test(qualityLabel || '')) return 'x265';
+  if (/av1/i.test(qualityLabel || '')) return 'AV1';
+  return 'x264';
+}
+
+/** Fills `{placeholder}` tokens in a dead-link report template from the post + option being reported. */
+function renderReportTemplate(template, { post, option }) {
+  const values = {
+    postLink: post.link,
+    title: post.title,
+    provider: option.provider || '',
+    providerName: option.providerName || option.provider || '',
+    quality: option.quality || '',
+    qualityLabel: option.qualityLabel || '',
+    codec: deriveCodec(option.qualityLabel),
+  };
+  return template.replace(/\{(\w+)\}/g, (match, key) => (key in values ? values[key] : match));
+}
+
 /**
  * REST API. Receives the wired application context (`app`) and exposes control
  * + inspection endpoints consumed by the web GUI.
@@ -49,6 +70,8 @@ export function createApiRouter(app) {
       duration: req.query.duration || 'all',
       rating: req.query.rating || 'all',
       sort: req.query.sort || 'date_desc',
+      metadataComplete: req.query.metadataComplete || 'all',
+      deadLink: req.query.deadLink || 'all',
     }));
   });
 
@@ -82,6 +105,35 @@ export function createApiRouter(app) {
     } catch (err) {
       res.status(500).json({ error: `Failed to resync post: ${err.message}` });
     }
+  });
+
+  // Builds the dead-link report comment text from the configured template —
+  // read-only, does not mark anything reported. The user reviews/copies this
+  // and submits it themselves as a WordPress comment on the post (semi-
+  // automated by design — see ARCHITECTURE.md's dead-link-reporting section).
+  router.post('/posts/:id/report-dead-link', (req, res) => {
+    const post = store.getPost(req.params.id);
+    if (!post) return res.status(404).json({ error: 'not found' });
+    const url = req.body?.url;
+    const option = (post.options || []).find((o) => o.url === url);
+    if (!option) return res.status(404).json({ error: 'option not found on this post' });
+
+    const template = runtime.deadLinkReport?.reportCommentTemplate
+      || 'Link: {postLink} – Info: {providerName} {quality} {codec} has been deleted, please add a new one';
+    const commentText = renderReportTemplate(template, { post, option });
+    res.json({ commentText, postLink: post.link });
+  });
+
+  // Persists that the user actually submitted the report — only this marks
+  // dead_reported_at, so a card never shows "Reported" from generating the
+  // text alone.
+  router.post('/posts/:id/mark-reported', (req, res) => {
+    const post = store.getPost(req.params.id);
+    if (!post) return res.status(404).json({ error: 'not found' });
+    const url = req.body?.url;
+    if (!url) return res.status(400).json({ error: 'url required' });
+    store.markOptionReported(post.id, url);
+    res.json(store.getPost(post.id));
   });
 
   // Enqueue resolution jobs for a post's matching options.
@@ -207,6 +259,9 @@ export function createApiRouter(app) {
   });
   router.post('/jobs/:id/retry', (req, res) => {
     res.json({ ok: queue.retry(req.params.id) });
+  });
+  router.post('/jobs/:id/mark-dead', (req, res) => {
+    res.json({ ok: queue.markDead(req.params.id) });
   });
   router.post('/jobs/:id/cancel', (req, res) => {
     res.json({ ok: queue.cancel(req.params.id) });

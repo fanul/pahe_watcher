@@ -331,6 +331,25 @@ body {
   pointer-events: none;
 }
 
+/* Metadata parsing didn't find everything required (see src/parser/metadata/) — distinct from and compatible with .dead-link, since a post can be both. */
+.card.metadata-incomplete {
+  position: relative;
+}
+
+.card.metadata-incomplete::before {
+  content: '⚠ Incomplete metadata';
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(234, 179, 8, 0.9);
+  color: #1a1a1a;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  z-index: 1;
+}
+
 .card-poster {
   width: 105px;
   height: 155px;

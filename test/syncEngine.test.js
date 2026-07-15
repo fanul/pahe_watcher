@@ -171,10 +171,12 @@ test('sweepMetadataBackfill fills in year/genre/director for posts synced under 
   });
 
   const richHtml = `
+    <div class="imdbwp__thumb"><img class="imdbwp__img" src="https://example.com/poster.jpg"></div>
     <div class="imdbwp__header"><span class="imdbwp__title">Backrooms</span> (2026)</p>
     <div class="imdbwp__meta"><span>110 min</span>|<span>Horror, Sci-Fi</span>|<span>29 May 2026</span></div>
+    <div class="imdbwp__belt"><span class="imdbwp__star">7.0</span></div>
     <div class="imdbwp__teaser">Refreshed synopsis</div>
-    <div class="imdbwp__footer"><strong>Director:</strong> <span>Kane Parsons</span></div>
+    <div class="imdbwp__footer"><strong>Director:</strong> <span>Kane Parsons</span><br /><strong>Actors:</strong> <span>Someone Actor</span></div>
   `;
   const client = {
     async getPost(id) {
@@ -195,6 +197,7 @@ test('sweepMetadataBackfill fills in year/genre/director for posts synced under 
   assert.equal(post.genre, 'Horror, Sci-Fi');
   assert.equal(post.durationMinutes, 110);
   assert.equal(post.director, 'Kane Parsons');
+  assert.equal(post.metadataComplete, true);
   assert.deepEqual(store.listPostsMissingExtendedMetadata(10), []);
 });
 

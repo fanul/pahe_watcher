@@ -113,6 +113,9 @@ export function loadConfig() {
       metadataBackfillSweepBatchSize: envInt('SYNC_METADATA_BACKFILL_SWEEP_BATCH_SIZE', d.sync.metadataBackfillSweepBatchSize),
       seriesResyncSweepBatchSize: envInt('SYNC_SERIES_RESYNC_SWEEP_BATCH_SIZE', d.sync.seriesResyncSweepBatchSize),
     },
+    deadLinkReport: {
+      reportCommentTemplate: envStr('DEAD_LINK_REPORT_COMMENT_TEMPLATE', d.deadLinkReport.reportCommentTemplate),
+    },
     store: {
       path: path.resolve(ROOT, envStr('STATE_PATH', d.store.path)),
       sqlitePath: path.resolve(ROOT, envStr('SQLITE_PATH', d.store.sqlitePath)),

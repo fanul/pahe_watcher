@@ -2,7 +2,7 @@
 import { $, api, state, esc } from './js/state.js';
 import { upsert } from './js/utils.js';
 import { renderStatus } from './js/status.js';
-import { loadPosts, renderPosts, notePostInserted, initPostFacets, markPostsWithDeadJob } from './js/posts.js';
+import { loadPosts, renderPosts, notePostInserted, initPostFacets, markPostsWithDeadJob, markOptionReported } from './js/posts.js';
 import { loadJobs, renderJobs, noteJobInserted, noteJobsRemoved, resetJobsCleared } from './js/jobs.js';
 import { initCrawl, updateCrawlProgress } from './js/crawl.js';
 import { initSettings, applyLayoutMode } from './js/settings.js';
@@ -110,6 +110,12 @@ function shouldPrependPost(payload) {
 
   const sort = $('#filterSort')?.value || 'date_desc';
   if (sort !== 'date_desc') return false;
+
+  const metadataComplete = $('#filterMetadata')?.value || 'all';
+  if (metadataComplete !== 'all') return false;
+
+  const deadLink = $('#filterDeadLink')?.value || 'all';
+  if (deadLink !== 'all') return false;
 
   // - The post is newer than the newest post in our current list (preventing old backfill posts from being prepended)
   const newestPost = state.posts[0];
@@ -236,6 +242,8 @@ document.body.addEventListener('click', async (e) => {
   if (t.dataset.pauseJob) { await api(`/jobs/${t.dataset.pauseJob}/pause`, { method: 'POST' }); }
   if (t.dataset.resumeJob) { await api(`/jobs/${t.dataset.resumeJob}/resume`, { method: 'POST' }); }
   if (t.dataset.deleteJob) { await api(`/jobs/${t.dataset.deleteJob}`, { method: 'DELETE' }); }
+  if (t.dataset.markDead) { await api(`/jobs/${t.dataset.markDead}/mark-dead`, { method: 'POST' }); }
+  if (t.dataset.reportPost) { await openReportDialog(t.dataset.reportPost, t.dataset.reportUrl); }
   if (t.dataset.post != null && t.dataset.idx != null) {
     const post = state.posts.find((p) => String(p.id) === t.dataset.post);
     const opt = post?.options?.[+t.dataset.idx];
@@ -285,6 +293,33 @@ $('#btnClearAllJobs').onclick = async () => {
   }
 };
 
+// ── dead-link reporting (semi-automated — prepares the comment text, the
+// user solves the captcha and submits it themselves on pahe.ink) ──
+const reportDialog = $('#reportDialog');
+let reportTarget = null; // { postId, url }
+
+async function openReportDialog(postId, url) {
+  try {
+    const res = await api(`/posts/${postId}/report-dead-link`, { method: 'POST', body: JSON.stringify({ url }) });
+    reportTarget = { postId, url };
+    $('#reportCommentText').value = res.commentText;
+    $('#reportPostLink').href = res.postLink;
+    reportDialog.showModal();
+  } catch (err) {
+    appendLog({ ts: '', level: 'error', scope: 'ui', msg: `Failed to prepare dead-link report: ${err.message}` });
+  }
+}
+
+$('#btnReportCancel')?.addEventListener('click', () => reportDialog.close());
+$('#btnMarkReported')?.addEventListener('click', async () => {
+  if (!reportTarget) return;
+  const { postId, url } = reportTarget;
+  const updatedPost = await api(`/posts/${postId}/mark-reported`, { method: 'POST', body: JSON.stringify({ url }) });
+  const opt = updatedPost.options?.find((o) => o.url === url);
+  markOptionReported(state, Number(postId), url, opt?.deadReportedAt || new Date().toISOString());
+  reportDialog.close();
+});
+
 // Keep references to searchable selects so we can access them if needed
 window.searchableSelects = [];
 function initSearchableSelects() {
@@ -297,7 +332,9 @@ function initSearchableSelects() {
     '#filterYear',
     '#filterDuration',
     '#filterRating',
-    '#filterSort'
+    '#filterSort',
+    '#filterMetadata',
+    '#filterDeadLink'
   ];
   selectors.forEach(sel => {
     const el = $(sel);
@@ -313,7 +350,7 @@ function refilterPostsSoon(delay = 300) {
   clearTimeout(filterDebounce);
   filterDebounce = setTimeout(() => loadPosts(state, { reset: true }), delay);
 }
-['#filterType', '#filterProvider', '#filterResolution', '#filterCodec', '#filterGenre', '#filterYear', '#filterDuration', '#filterRating', '#filterSort'].forEach((sel) => {
+['#filterType', '#filterProvider', '#filterResolution', '#filterCodec', '#filterGenre', '#filterYear', '#filterDuration', '#filterRating', '#filterSort', '#filterMetadata', '#filterDeadLink'].forEach((sel) => {
   $(sel)?.addEventListener('change', () => refilterPostsSoon(0));
 });
 $('#filterSearch')?.addEventListener('input', () => refilterPostsSoon(300));

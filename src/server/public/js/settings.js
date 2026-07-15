@@ -7,6 +7,7 @@ import { populateCaptchaSettings, serializeCaptchaSettings, updateGroupVisibilit
 import { populateGdflixSettings, serializeGdflixSettings, initGdflixSettings } from './settings/gdflix.js';
 import { populateGoogleSettings, serializeGoogleSettings } from './settings/google.js';
 import { populateSyncSettings, serializeSyncSettings } from './settings/sync.js';
+import { populateDeadLinkReportSettings, serializeDeadLinkReportSettings } from './settings/deadLinkReport.js';
 
 export function applyLayoutMode() {
   const mode = localStorage.getItem('layoutMode') || 'stay-on-top';
@@ -35,6 +36,7 @@ export function initSettings(refreshAll) {
     populateGdflixSettings(f, cfg);
     populateGoogleSettings(f, cfg);
     populateSyncSettings(f, cfg);
+    populateDeadLinkReportSettings(f, cfg);
 
     // Populate layout mode
     const layoutMode = localStorage.getItem('layoutMode') || 'stay-on-top';
@@ -60,7 +62,8 @@ export function initSettings(refreshAll) {
         google: serializeGoogleSettings(f)
       },
       sheets: serializeSheetsSettings(f),
-      sync: serializeSyncSettings(f)
+      sync: serializeSyncSettings(f),
+      deadLinkReport: serializeDeadLinkReportSettings(f)
     };
 
     // Save layout mode

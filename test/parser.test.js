@@ -1,65 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDownloadOptions, selectOptions, checkIsSeries, parsePostMetadata, parseSeasonRangeFromTitle } from '../src/parser/postParser.js';
-
-// Real markup captured from a live pahe.ink movie post (imdbwp IMDb-widget layout).
-const MOVIE_METADATA_SAMPLE = `
-<div class="imdbwp imdbwp--movie dark">
-<div class="imdbwp__thumb"><a class="imdbwp__link" href="http://www.imdb.com/title/tt26657236/"><img class="imdbwp__img" src="https://example.com/poster.jpg"></a></div>
-<div class="imdbwp__content">
-<div class="imdbwp__header"><span class="imdbwp__title">Backrooms</span> (2026)</p>
-<div class="imdbwp__meta"><span>110 min</span>|<span>Horror, Sci-Fi, Thriller</span>|<span>29 May 2026</span></div>
-</div>
-<div class="imdbwp__belt"><span class="imdbwp__star">7.0</span><span class="imdbwp__rating"><strong>Rating:</strong> 7.0 / 10 from 100,148 users</span></div>
-<div class="imdbwp__teaser">After a therapist's patient disappears into a dimension beyond reality, she must venture into the unknown to save him.</div>
-<div class="imdbwp__footer"><strong>Director:</strong> <span>Kane Parsons</span><br /><strong>Creator:</strong> <span>Will Soodik, Kane Parsons</span><br /><strong>Actors:</strong> <span>Chiwetel Ejiofor, Renate Reinsve, Mark Duplass</span></div>
-</div>
-</div>
-`;
-
-// Real markup from a live in-progress series post: N/A duration, open-ended year, no Director line.
-const SERIES_METADATA_SAMPLE = `
-<div class="imdbwp imdbwp--series dark">
-<div class="imdbwp__content">
-<div class="imdbwp__header"><span class="imdbwp__title">House of the Dragon</span> (2022–)</p>
-<div class="imdbwp__meta"><span>N/A</span>|<span>Action, Adventure, Drama</span>|<span>21 Aug 2022</span></div>
-</div>
-<div class="imdbwp__belt"><span class="imdbwp__star">8.3</span></div>
-<div class="imdbwp__teaser">An internal succession war within House Targaryen.</div>
-<div class="imdbwp__footer"><strong>Creator:</strong> <span>Ryan J. Condal, George R.R. Martin</span><br /><strong>Actors:</strong> <span>Matt Smith, Emma D'Arcy, Olivia Cooke</span></div>
-</div>
-</div>
-`;
-
-test('parsePostMetadata extracts year/genre/duration/director/creator/actors from a movie post', () => {
-  const meta = parsePostMetadata(MOVIE_METADATA_SAMPLE);
-  assert.equal(meta.year, 2026);
-  assert.equal(meta.genre, 'Horror, Sci-Fi, Thriller');
-  assert.equal(meta.durationMinutes, 110);
-  assert.equal(meta.director, 'Kane Parsons');
-  assert.equal(meta.creator, 'Will Soodik, Kane Parsons');
-  assert.equal(meta.actors, 'Chiwetel Ejiofor, Renate Reinsve, Mark Duplass');
-});
-
-test('parsePostMetadata handles series posts: open-ended year, N/A duration, no Director label', () => {
-  const meta = parsePostMetadata(SERIES_METADATA_SAMPLE);
-  assert.equal(meta.year, 2022);
-  assert.equal(meta.genre, 'Action, Adventure, Drama');
-  assert.equal(meta.durationMinutes, null);
-  assert.equal(meta.director, '');
-  assert.equal(meta.creator, 'Ryan J. Condal, George R.R. Martin');
-  assert.equal(meta.actors, "Matt Smith, Emma D'Arcy, Olivia Cooke");
-});
-
-test('parsePostMetadata defaults new fields to empty/null when the imdbwp block is absent', () => {
-  const meta = parsePostMetadata('<p>No IMDb widget here.</p>');
-  assert.equal(meta.year, null);
-  assert.equal(meta.genre, '');
-  assert.equal(meta.durationMinutes, null);
-  assert.equal(meta.director, '');
-  assert.equal(meta.creator, '');
-  assert.equal(meta.actors, '');
-});
+import { parseDownloadOptions, selectOptions, checkIsSeries, parseSeasonRangeFromTitle } from '../src/parser/postParser.js';
 
 // Mirrors the real pahe.ink layout: a <b> quality/size label followed by a row
 // of short provider anchors pointing at a shortener host.

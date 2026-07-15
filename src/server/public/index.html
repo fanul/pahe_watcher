@@ -25,6 +25,22 @@
     <button id="btnCaptchaSolved" class="btn small">I solved it</button>
   </div>
 
+  <dialog id="reportDialog">
+    <h3>Report Dead Link</h3>
+    <label for="reportCommentText">Comment text (copy this)
+      <textarea id="reportCommentText" rows="3" readonly></textarea>
+    </label>
+    <div class="muted small" style="margin-top: 6px;">
+      Open the post's page, paste this as a comment, solve the captcha, and submit it yourself — pahe.ink requires a
+      real WordPress comment for dead-link reports. Once you've submitted it, click "Mark as Reported" below.
+    </div>
+    <menu style="margin-top: 16px;">
+      <button type="button" value="cancel" class="btn ghost" id="btnReportCancel">Close</button>
+      <a id="reportPostLink" href="#" target="_blank" rel="noopener" class="btn ghost" style="text-decoration: none;">Open post page ↗</a>
+      <button type="button" class="btn" id="btnMarkReported">Mark as Reported</button>
+    </menu>
+  </dialog>
+
   <main class="grid">
     <section class="panel">
       <div class="tabs-header">
@@ -118,6 +134,22 @@
               <option value="year_asc">Year (old-new)</option>
               <option value="title_asc">Title (A-Z)</option>
               <option value="title_desc">Title (Z-A)</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterMetadata">Metadata</label>
+            <select id="filterMetadata" class="filter-select">
+              <option value="all">All</option>
+              <option value="complete">Complete</option>
+              <option value="incomplete">Incomplete</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filterDeadLink">Dead Link</label>
+            <select id="filterDeadLink" class="filter-select">
+              <option value="all">All</option>
+              <option value="dead">Has dead link</option>
+              <option value="not-dead">No dead link</option>
             </select>
           </div>
         </div>
@@ -333,6 +365,18 @@
             The historical crawl tab runs one resumable batch at a time — each run picks up where the
             last one left off (not a full one-shot crawl). Change direction/batch size here, or per-run
             from the Historical Crawl tab.
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Dead Link Reporting</legend>
+          <label>Report comment template
+            <textarea name="deadLinkReport_reportCommentTemplate" rows="2" placeholder="Link: {postLink} – Info: {providerName} {quality} {codec} has been deleted, please add a new one"></textarea>
+          </label>
+          <div class="muted small" style="margin-top: 6px;">
+            Placeholders: <code>{postLink}</code> <code>{title}</code> <code>{provider}</code> <code>{providerName}</code>
+            <code>{quality}</code> <code>{qualityLabel}</code> <code>{codec}</code>. Clicking "Report" on a chip prepares this
+            text and opens the post's page for you — you still solve the captcha and submit the comment yourself.
           </div>
         </fieldset>
 

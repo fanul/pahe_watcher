@@ -25,6 +25,8 @@ function currentFilters() {
     duration: $('#filterDuration')?.value || 'all',
     rating: $('#filterRating')?.value || 'all',
     sort: $('#filterSort')?.value || 'date_desc',
+    metadataComplete: $('#filterMetadata')?.value || 'all',
+    deadLink: $('#filterDeadLink')?.value || 'all',
   };
 }
 
@@ -73,6 +75,16 @@ export function markPostsWithDeadJob(state, postLink) {
     }
   }
   if (changed) renderPosts(state);
+}
+
+/** Marks one option as reported in local state (after a confirmed /mark-reported call), so its chip shows "✓ Reported" without a full posts refetch. */
+export function markOptionReported(state, postId, url, deadReportedAt) {
+  const post = state.posts.find((p) => p.id === postId);
+  const opt = post?.options?.find((o) => o.url === url);
+  if (opt) {
+    opt.deadReportedAt = deadReportedAt;
+    renderPosts(state);
+  }
 }
 
 /**
@@ -146,6 +158,10 @@ export function renderPosts(state) {
       const resolveText = o.resolvedUrl ? 'Re-resolve ↗' : 'Resolve ↗';
       const actionSep = o.resolvedUrl ? '<span class="muted" style="margin: 0 4px; font-size: 11px;">·</span>' : '';
 
+      const reportAction = o.deadReportedAt
+        ? `<span class="muted" style="font-size: 11px; margin-left: 6px;" title="Reported ${esc(new Date(o.deadReportedAt).toLocaleString())}">✓ Reported</span>`
+        : `<button type="button" class="chip-action" data-report-post="${p.id}" data-report-url="${esc(o.url)}" style="background: none; border: none; padding: 0; margin-left: 6px; color: var(--red, #ef4444); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;">Report ↗</button>`;
+
       return `
         <div class="chip-row">
           <div class="chip-info">
@@ -156,6 +172,7 @@ export function renderPosts(state) {
             ${openBtn}
             ${actionSep}
             <button type="button" class="chip-action" data-post="${p.id}" data-idx="${realIdx}" style="background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;">${resolveText}</button>
+            ${reportAction}
           </div>
         </div>
       `;
@@ -187,7 +204,7 @@ export function renderPosts(state) {
       ? `<div class="meta small muted">${creditsParts.join(' &nbsp;·&nbsp; ')}</div>` : '';
 
     return `
-      <div class="card${p.hasDeadJob ? ' dead-link' : ''}">
+      <div class="card${p.hasDeadJob ? ' dead-link' : ''}${!p.metadataComplete ? ' metadata-incomplete' : ''}">
         <div class="card-poster">${posterHtml}</div>
         <div class="card-content">
           <div class="title" title="${esc(p.title)}">${esc(p.title)}</div>
@@ -257,7 +274,9 @@ export function hasActiveFilters() {
          f.year !== 'all' ||
          f.duration !== 'all' ||
          f.rating !== 'all' ||
-         f.sort !== 'date_desc';
+         f.sort !== 'date_desc' ||
+         f.metadataComplete !== 'all' ||
+         f.deadLink !== 'all';
 }
 
 export function setTotalPostCount(n) {

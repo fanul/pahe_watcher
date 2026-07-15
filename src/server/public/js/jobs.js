@@ -63,6 +63,7 @@ export function renderJobs(state) {
     if (['running', 'needs-captcha'].includes(j.status)) {
       acts.push(`<button class="btn small danger" data-cancel="${j.id}">Cancel</button>`);
     }
+    if (['done', 'failed'].includes(j.status)) acts.push(`<button class="btn small danger" data-mark-dead="${j.id}" title="Flag this link as dead — the automatic detector didn't catch it, but you've confirmed it's actually dead">Mark Dead</button>`);
     if (['done', 'failed', 'cancelled', 'dead'].includes(j.status)) acts.push(`<button class="btn small danger-btn" data-delete-job="${j.id}">Delete</button>`);
     const isSheetError = j.status === 'failed' && j.result?.finalUrl;
     const isSuccess = j.status === 'done';

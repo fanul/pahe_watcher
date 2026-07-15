@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS posts (
   duration_minutes   INTEGER,
   director           TEXT,
   creator            TEXT,
-  actors             TEXT
+  actors             TEXT,
+  metadata_complete  INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS post_options (
@@ -47,7 +48,8 @@ CREATE TABLE IF NOT EXISTS post_options (
   season         INTEGER,
   size_label     TEXT,
   url            TEXT,
-  host           TEXT
+  host           TEXT,
+  dead_reported_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_post_options_post_id ON post_options(post_id);
 
@@ -99,6 +101,7 @@ const NEW_POST_COLUMNS = {
   director: 'TEXT',
   creator: 'TEXT',
   actors: 'TEXT',
+  metadata_complete: 'INTEGER',
 };
 
 function migratePostsColumns(db) {
@@ -113,6 +116,7 @@ function migratePostsColumns(db) {
 /** Columns added to `post_options` after the initial release — same idempotent ALTER TABLE pattern. */
 const NEW_POST_OPTION_COLUMNS = {
   season: 'INTEGER',
+  dead_reported_at: 'TEXT',
 };
 
 function migratePostOptionsColumns(db) {

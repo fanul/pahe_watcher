@@ -63,20 +63,27 @@ export class Store {
       allPostOptions: this.db.prepare('SELECT * FROM post_options ORDER BY post_id, sort_order'),
       deletePostOptions: this.db.prepare('DELETE FROM post_options WHERE post_id = ?'),
       insertOption: this.db.prepare(
-        `INSERT INTO post_options (post_id, sort_order, provider, provider_name, quality, quality_label, season, size_label, url, host)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO post_options (post_id, sort_order, provider, provider_name, quality, quality_label, season, size_label, url, host, dead_reported_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ),
+      existingReportedUrls: this.db.prepare(
+        'SELECT url, dead_reported_at FROM post_options WHERE post_id = ? AND dead_reported_at IS NOT NULL',
+      ),
+      markOptionReported: this.db.prepare(
+        'UPDATE post_options SET dead_reported_at = ? WHERE post_id = ? AND url = ?',
       ),
       upsertPost: this.db.prepare(`
         INSERT INTO posts (id, title, link, date, seen_at, poster, rating, synopsis, is_series, page_found, content_synced_at,
-                            year, genre, duration_minutes, director, creator, actors)
+                            year, genre, duration_minutes, director, creator, actors, metadata_complete)
         VALUES (@id, @title, @link, @date, @seen_at, @poster, @rating, @synopsis, @is_series, @page_found, @content_synced_at,
-                @year, @genre, @duration_minutes, @director, @creator, @actors)
+                @year, @genre, @duration_minutes, @director, @creator, @actors, @metadata_complete)
         ON CONFLICT(id) DO UPDATE SET
           title=excluded.title, link=excluded.link, date=excluded.date, seen_at=excluded.seen_at,
           poster=excluded.poster, rating=excluded.rating, synopsis=excluded.synopsis,
           is_series=excluded.is_series, page_found=excluded.page_found, content_synced_at=excluded.content_synced_at,
           year=excluded.year, genre=excluded.genre, duration_minutes=excluded.duration_minutes,
-          director=excluded.director, creator=excluded.creator, actors=excluded.actors
+          director=excluded.director, creator=excluded.creator, actors=excluded.actors,
+          metadata_complete=excluded.metadata_complete
       `),
       countPosts: this.db.prepare('SELECT COUNT(*) AS n FROM posts'),
       countJobs: this.db.prepare('SELECT COUNT(*) AS n FROM jobs'),
@@ -95,10 +102,10 @@ export class Store {
       unsyncedPostIds: this.db.prepare('SELECT id FROM posts WHERE content_synced_at IS NULL ORDER BY id ASC LIMIT ?'),
       countUnsyncedPosts: this.db.prepare('SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NULL'),
       missingExtendedMetadataIds: this.db.prepare(
-        'SELECT id FROM posts WHERE content_synced_at IS NOT NULL AND year IS NULL AND genre IS NULL ORDER BY id ASC LIMIT ?',
+        "SELECT id FROM posts WHERE content_synced_at IS NOT NULL AND (metadata_complete IS NULL OR metadata_complete = 0) ORDER BY id ASC LIMIT ?",
       ),
       countMissingExtendedMetadata: this.db.prepare(
-        'SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NOT NULL AND year IS NULL AND genre IS NULL',
+        "SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NOT NULL AND (metadata_complete IS NULL OR metadata_complete = 0)",
       ),
       distinctYears: this.db.prepare('SELECT DISTINCT year FROM posts WHERE year IS NOT NULL ORDER BY year DESC'),
       distinctGenres: this.db.prepare("SELECT DISTINCT genre FROM posts WHERE genre IS NOT NULL AND genre != ''"),
@@ -197,13 +204,24 @@ export class Store {
         director: post.director || null,
         creator: post.creator || null,
         actors: post.actors || null,
+        metadata_complete: post.metadataComplete === undefined ? null : (post.metadataComplete ? 1 : 0),
       });
+
+      // dead_reported_at is a durable manual annotation tied to a specific
+      // link, not sync-derived state — preserve it across the full-replace
+      // below (shortener URLs stay stable across resyncs of the same content).
+      const preservedReports = new Map();
+      for (const row of this._stmt.existingReportedUrls.all(id)) {
+        preservedReports.set(row.url, row.dead_reported_at);
+      }
+
       this._stmt.deletePostOptions.run(id);
       options.forEach((opt, i) => {
         this._stmt.insertOption.run(
           id, i,
           opt.provider ?? null, opt.providerName ?? null, opt.quality ?? null,
           opt.qualityLabel ?? null, opt.season ?? null, opt.sizeLabel ?? null, opt.url ?? null, opt.host ?? null,
+          preservedReports.get(opt.url) ?? null,
         );
       });
     });
@@ -257,8 +275,9 @@ export class Store {
   queryPosts({
     limit = 24, offset = 0, search = '', type = 'all', provider = 'all', quality = 'all', codec = 'all',
     genre = 'all', year = 'all', duration = 'all', rating = 'all', sort = 'date_desc',
+    metadataComplete = 'all', deadLink = 'all',
   } = {}) {
-    const { joinSql, whereSql, params } = this._buildPostsFilter({ search, type, provider, quality, codec, genre, year, duration, rating });
+    const { joinSql, whereSql, params } = this._buildPostsFilter({ search, type, provider, quality, codec, genre, year, duration, rating, metadataComplete, deadLink });
     const orderSql = SORT_CLAUSES[sort] || SORT_CLAUSES.date_desc;
 
     const total = this.db.prepare(`SELECT COUNT(*) AS n FROM posts ${joinSql} ${whereSql}`).get(...params).n;
@@ -295,7 +314,7 @@ export class Store {
     return { items, total };
   }
 
-  _buildPostsFilter({ search, type, provider, quality, codec, genre = 'all', year = 'all', duration = 'all', rating = 'all' }) {
+  _buildPostsFilter({ search, type, provider, quality, codec, genre = 'all', year = 'all', duration = 'all', rating = 'all', metadataComplete = 'all', deadLink = 'all' }) {
     const joins = [];
     const where = [];
     const params = [];
@@ -332,6 +351,15 @@ export class Store {
     if (duration === 'short') where.push('posts.duration_minutes IS NOT NULL AND posts.duration_minutes < 90');
     else if (duration === 'medium') where.push('posts.duration_minutes BETWEEN 90 AND 150');
     else if (duration === 'long') where.push('posts.duration_minutes IS NOT NULL AND posts.duration_minutes > 150');
+
+    if (metadataComplete === 'complete') where.push('posts.metadata_complete = 1');
+    else if (metadataComplete === 'incomplete') where.push('(posts.metadata_complete IS NULL OR posts.metadata_complete = 0)');
+
+    if (deadLink === 'dead') {
+      where.push("EXISTS (SELECT 1 FROM jobs WHERE jobs.post_link = posts.link AND jobs.status = 'dead')");
+    } else if (deadLink === 'not-dead') {
+      where.push("NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.post_link = posts.link AND jobs.status = 'dead')");
+    }
 
     const hasLinkFilters = (provider && provider !== 'all') || (quality && quality !== 'all') || (codec && codec !== 'all');
     if (hasLinkFilters) {
@@ -371,6 +399,11 @@ export class Store {
 
   countPostsMissingExtendedMetadata() {
     return this._stmt.countMissingExtendedMetadata.get().n;
+  }
+
+  /** Marks a specific download option as having had a dead-link report submitted for it. */
+  markOptionReported(postId, url) {
+    this._stmt.markOptionReported.run(new Date().toISOString(), Number(postId), url);
   }
 
   /**
@@ -433,6 +466,7 @@ export class Store {
       director: row.director || '',
       creator: row.creator || '',
       actors: row.actors || '',
+      metadataComplete: Boolean(row.metadata_complete),
       hasDeadJob: row.has_dead_job === undefined ? undefined : Boolean(row.has_dead_job),
       options: options ?? this._stmt.getPostOptions.all(row.id).map((r) => this._hydrateOption(r)),
     };
@@ -459,6 +493,7 @@ export class Store {
       host: row.host,
       resolvedUrl,
       resolvedLinkType,
+      deadReportedAt: row.dead_reported_at ?? null,
     };
   }
 

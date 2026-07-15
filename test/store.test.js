@@ -178,6 +178,7 @@ function seedForQuery(store) {
   store.markPost({
     id: 1, title: 'Dragon Warriors', link: 'l1', date: '2026-01-05', isSeries: false, synopsis: 'Epic dragon battle',
     year: 2026, genre: 'Action, Fantasy', durationMinutes: 130, director: 'Alice Director', actors: 'Actor One, Actor Two',
+    metadataComplete: true,
     options: [
       { provider: 'GD', quality: '720p', qualityLabel: '720p x264', url: 'u1' },
       { provider: 'GD', quality: '1080p', qualityLabel: '1080p x265 10Bit', url: 'u2' },
@@ -186,11 +187,13 @@ function seedForQuery(store) {
   store.markPost({
     id: 2, title: 'Space Odyssey', link: 'l2', date: '2026-01-04', isSeries: false, synopsis: 'A journey to the stars',
     year: 2020, genre: 'Sci-Fi', durationMinutes: 85,
+    metadataComplete: true,
     options: [{ provider: '1F', quality: '720p', qualityLabel: '720p x264', url: 'u3' }],
   });
   store.markPost({
     id: 3, title: 'Dragon Kingdom Season 1', link: 'l3', date: '2026-01-03', isSeries: true, synopsis: 'Dragons rule the kingdom',
     year: 2024, genre: 'Fantasy, Drama', creator: 'Bob Creator', actors: 'Actor Three',
+    metadataComplete: true,
     options: [{ provider: 'GD', quality: '1080p', qualityLabel: '1080p x265', url: 'u4' }],
   });
   store.markPost({ id: 4, title: 'Random Comedy', link: 'l4', date: '2026-01-02', isSeries: false, synopsis: 'Funny stuff', options: [] });
@@ -347,17 +350,17 @@ test('getPostFacets returns distinct years (desc) and flattened genre tokens', (
   assert.deepEqual(facets.genres, ['Action', 'Drama', 'Fantasy', 'Sci-Fi'].sort((a, b) => a.localeCompare(b)));
 });
 
-test('listPostsMissingExtendedMetadata / countPostsMissingExtendedMetadata: synced posts missing year/genre only', (t) => {
+test('listPostsMissingExtendedMetadata / countPostsMissingExtendedMetadata: synced posts not flagged metadataComplete', (t) => {
   const { store, dir } = tmpStore();
   cleanup(t, dir, store);
   seedForQuery(store);
 
   // posts 4 and 5 both count as "synced" (a synopsis alone sets content_synced_at, same as having
-  // options) but neither has year/genre — both are targets of the metadata-backfill sweep.
+  // options) but neither was marked metadataComplete — both are targets of the metadata-backfill sweep.
   assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [4, 5]);
   assert.equal(store.countPostsMissingExtendedMetadata(), 2);
 
-  store.markPost({ ...store.getPost(4), id: 4, year: 2015, genre: 'Comedy' });
+  store.markPost({ ...store.getPost(4), id: 4, year: 2015, genre: 'Comedy', metadataComplete: true });
   assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [5]);
   assert.equal(store.countPostsMissingExtendedMetadata(), 1);
 });
@@ -405,4 +408,47 @@ test('listStaleSeriesPostIds / countStaleSeries: detects series whose title clai
   });
   assert.deepEqual(store.listStaleSeriesPostIds(10), [12]);
   assert.equal(store.countStaleSeries(), 1);
+});
+
+test('queryPosts: metadataComplete filter — posts 1/2/3 are complete, posts 4/5 (never flagged) count as incomplete', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  assert.deepEqual(store.queryPosts({ metadataComplete: 'complete' }).items.map((p) => p.id).sort(), [1, 2, 3]);
+  assert.deepEqual(store.queryPosts({ metadataComplete: 'incomplete' }).items.map((p) => p.id).sort(), [4, 5]);
+  assert.equal(store.queryPosts({ metadataComplete: 'all' }).total, 5);
+});
+
+test('queryPosts: deadLink filter matches jobs.post_link = posts.link regardless of how the job was created', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  store.upsertJob({
+    id: 'dead-job-1', status: 'dead', createdAt: 'd', updatedAt: 'd',
+    postLink: 'l2', title: 'x', provider: 'GD', quality: '720p', url: 'u3',
+  });
+
+  assert.deepEqual(store.queryPosts({ deadLink: 'dead' }).items.map((p) => p.id), [2]);
+  assert.deepEqual(store.queryPosts({ deadLink: 'not-dead' }).items.map((p) => p.id).sort(), [1, 3, 4, 5]);
+});
+
+test('markOptionReported persists dead_reported_at on the matching option and survives a resync', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  assert.equal(store.getPost(1).options.find((o) => o.url === 'u1').deadReportedAt, null);
+
+  store.markOptionReported(1, 'u1');
+  const reportedAt = store.getPost(1).options.find((o) => o.url === 'u1').deadReportedAt;
+  assert.ok(reportedAt, 'deadReportedAt should be set');
+
+  // A full-replace resync (markPost re-inserting the same options) must not lose the report.
+  store.markPost({ ...store.getPost(1), id: 1 });
+  assert.equal(store.getPost(1).options.find((o) => o.url === 'u1').deadReportedAt, reportedAt);
+
+  // A different option on the same post is unaffected.
+  assert.equal(store.getPost(1).options.find((o) => o.url === 'u2').deadReportedAt, null);
 });

@@ -22,6 +22,11 @@ import {
   applySyncOverrides,
   mergeSyncOverrides
 } from './config/sync.js';
+import {
+  getPublicDeadLinkReportConfig,
+  applyDeadLinkReportOverrides,
+  mergeDeadLinkReportOverrides
+} from './config/deadLinkReport.js';
 
 const log = createLogger('app:config');
 
@@ -31,6 +36,7 @@ export function getPublicConfig(runtime, sheets) {
     bypass: getPublicBypassConfig(runtime),
     sheets: getPublicSheetsConfig(runtime, sheets),
     sync: getPublicSyncConfig(runtime),
+    deadLinkReport: getPublicDeadLinkReportConfig(runtime),
   };
 }
 
@@ -101,6 +107,7 @@ export function applyOverrides(runtime, patch) {
   applyBypassOverrides(runtime, patch);
   applySheetsOverrides(runtime, patch);
   applySyncOverrides(runtime, patch);
+  applyDeadLinkReportOverrides(runtime, patch);
   return runtime;
 }
 
@@ -110,5 +117,6 @@ export function mergeOverrides(existing, patch) {
     bypass: mergeBypassOverrides(existing, patch),
     sheets: mergeSheetsOverrides(existing, patch),
     sync: mergeSyncOverrides(existing, patch),
+    deadLinkReport: mergeDeadLinkReportOverrides(existing, patch),
   };
 }
