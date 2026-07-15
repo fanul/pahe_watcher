@@ -85,14 +85,16 @@ export function renderJobs(state) {
     }
 
     return `<div class="${cardClass}">
-      <div class="job-title">${esc(j.title || 'job')}</div>
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px">
-        <div class="meta" style="margin-bottom:0">${j.provider || ''} ${j.quality || ''} · attempt ${j.attempts || 0}${errorSpan}</div>
-        <span class="job-status ${j.status}">${esc(statusText)}</span>
+      <div style="display:flex; flex-direction:column; flex:1; min-width:0">
+        <div class="job-title">${esc(j.title || 'job')}</div>
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px">
+          <div class="meta" style="margin-bottom:0">${j.provider || ''} ${j.quality || ''} · attempt ${j.attempts || 0}${errorSpan}</div>
+          <span class="job-status ${j.status}">${esc(statusText)}</span>
+        </div>
+        ${final}
+        ${logs ? `<div class="joblog">${esc(logs)}</div>` : ''}
+        ${acts.length ? `<div class="actions" style="margin-top:6px">${acts.join('')}</div>` : ''}
       </div>
-      ${final}
-      ${logs ? `<div class="joblog">${esc(logs)}</div>` : ''}
-      ${acts.length ? `<div class="actions">${acts.join('')}</div>` : ''}
     </div>`;
   }).join('') || '<div class="muted">No jobs yet.</div>';
 
