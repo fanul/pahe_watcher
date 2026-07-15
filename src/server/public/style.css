@@ -336,18 +336,67 @@ body {
   position: relative;
 }
 
-.card.metadata-incomplete::before {
-  content: '⚠ Incomplete metadata';
+/* Real, clickable badge (replaces the old ::before pseudo-badge) — opens a
+   dropdown (#metadataBadgeMenu) to mark/unmark "source incomplete". */
+.metadata-badge {
   position: absolute;
   top: 6px;
   right: 6px;
-  background: rgba(234, 179, 8, 0.9);
-  color: #1a1a1a;
   font-size: 10px;
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
   z-index: 1;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.metadata-badge.incomplete {
+  background: rgba(234, 179, 8, 0.9);
+  color: #1a1a1a;
+}
+
+.metadata-badge.source-incomplete {
+  background: rgba(148, 163, 184, 0.85);
+  color: #0f172a;
+}
+
+/* Shared floating dropdown for the metadata badge — appended once to <body>
+   and repositioned via JS next to whichever badge was clicked, so it isn't
+   clipped by any card's `overflow: hidden`. */
+.badge-menu {
+  position: fixed;
+  z-index: 50;
+  background: #111827;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.6);
+  min-width: 220px;
+  padding: 4px;
+}
+
+.badge-menu.hidden {
+  display: none;
+}
+
+.badge-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.badge-menu-item:hover {
+  background: rgba(99, 102, 241, 0.15);
 }
 
 .card-poster {
@@ -437,6 +486,14 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Search stays visible; the detailed filter grid below can be collapsed via #btnToggleFilters. */
+.filter-bar-search {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
 /* Dynamic Filter Controls */
 .filter-bar {
   display: grid;
@@ -447,6 +504,10 @@ body {
   border-radius: 8px;
   padding: 10px;
   margin-bottom: 14px;
+}
+
+.filter-bar.collapsed {
+  display: none;
 }
 
 .filter-group {

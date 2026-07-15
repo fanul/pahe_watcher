@@ -77,6 +77,15 @@ export function markPostsWithDeadJob(state, postLink) {
   if (changed) renderPosts(state);
 }
 
+/** Updates a post's source-incomplete flag in local state (after a confirmed /mark-source-incomplete call), so its badge changes without a full posts refetch. */
+export function markPostSourceIncomplete(state, postId, flag) {
+  const post = state.posts.find((p) => p.id === postId);
+  if (post) {
+    post.metadataSourceIncomplete = flag;
+    renderPosts(state);
+  }
+}
+
 /** Marks one option as reported in local state (after a confirmed /mark-reported call), so its chip shows "✓ Reported" without a full posts refetch. */
 export function markOptionReported(state, postId, url, deadReportedAt) {
   const post = state.posts.find((p) => p.id === postId);
@@ -203,8 +212,16 @@ export function renderPosts(state) {
     const creditsHtml = creditsParts.length
       ? `<div class="meta small muted">${creditsParts.join(' &nbsp;·&nbsp; ')}</div>` : '';
 
+    let metadataBadgeHtml = '';
+    if (p.metadataSourceIncomplete) {
+      metadataBadgeHtml = `<button type="button" class="metadata-badge source-incomplete" data-metadata-badge="${p.id}" title="Manually flagged: pahe.ink's own page never had this data">ℹ Source incomplete</button>`;
+    } else if (!p.metadataComplete) {
+      metadataBadgeHtml = `<button type="button" class="metadata-badge incomplete" data-metadata-badge="${p.id}" title="Click to change">⚠ Incomplete metadata</button>`;
+    }
+
     return `
       <div class="card${p.hasDeadJob ? ' dead-link' : ''}${!p.metadataComplete ? ' metadata-incomplete' : ''}">
+        ${metadataBadgeHtml}
         <div class="card-poster">${posterHtml}</div>
         <div class="card-content">
           <div class="title" title="${esc(p.title)}">${esc(p.title)}</div>

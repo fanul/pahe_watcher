@@ -102,6 +102,10 @@ const NEW_POST_COLUMNS = {
   creator: 'TEXT',
   actors: 'TEXT',
   metadata_complete: 'INTEGER',
+  // Manual override: the user has confirmed pahe.ink's own page for this
+  // post never had this metadata (not a parser gap) — excludes it from the
+  // batch "Resync incomplete metadata" sweep so it isn't refetched forever.
+  metadata_source_incomplete: 'INTEGER',
 };
 
 function migratePostsColumns(db) {

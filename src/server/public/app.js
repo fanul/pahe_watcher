@@ -2,7 +2,7 @@
 import { $, api, state, esc } from './js/state.js';
 import { upsert } from './js/utils.js';
 import { renderStatus } from './js/status.js';
-import { loadPosts, renderPosts, notePostInserted, initPostFacets, markPostsWithDeadJob, markOptionReported } from './js/posts.js';
+import { loadPosts, renderPosts, notePostInserted, initPostFacets, markPostsWithDeadJob, markOptionReported, markPostSourceIncomplete } from './js/posts.js';
 import { loadJobs, renderJobs, noteJobInserted, noteJobsRemoved, resetJobsCleared } from './js/jobs.js';
 import { initCrawl, updateCrawlProgress } from './js/crawl.js';
 import { initSettings, applyLayoutMode } from './js/settings.js';
@@ -218,8 +218,58 @@ $('#btnWatcher').onclick = () =>
 $('#btnQueue').onclick = () =>
   api('/queue/pause', { method: 'POST', body: JSON.stringify({ paused: !state.status.queue.paused }) }).then(refreshStatusOnly);
 
+// ── metadata badge dropdown (mark/unmark "source incomplete") — one shared
+// floating menu, repositioned via JS next to whichever badge was clicked, so
+// it isn't clipped by a card's `overflow: hidden`. ──
+const metadataMenu = $('#metadataBadgeMenu');
+
+function closeMetadataMenu() {
+  metadataMenu.classList.add('hidden');
+  metadataMenu.innerHTML = '';
+  delete metadataMenu.dataset.forPost;
+}
+
+function toggleMetadataMenu(badgeEl, postId) {
+  const wasOpenForThis = metadataMenu.dataset.forPost === String(postId) && !metadataMenu.classList.contains('hidden');
+  closeMetadataMenu();
+  if (wasOpenForThis) return; // clicking the same badge again just closes it
+
+  const post = state.posts.find((p) => String(p.id) === String(postId));
+  if (!post) return;
+
+  metadataMenu.dataset.forPost = String(postId);
+  metadataMenu.innerHTML = post.metadataSourceIncomplete
+    ? `<button type="button" class="badge-menu-item" data-unmark-source-incomplete="${postId}">Unmark — include in batch resync again</button>`
+    : `<button type="button" class="badge-menu-item" data-mark-source-incomplete="${postId}">Source has no metadata — exclude from batch resync</button>`;
+
+  const rect = badgeEl.getBoundingClientRect();
+  metadataMenu.style.top = `${rect.bottom + 4}px`;
+  metadataMenu.style.left = `${Math.max(4, rect.right - 220)}px`;
+  metadataMenu.classList.remove('hidden');
+}
+
 document.body.addEventListener('click', async (e) => {
   const t = e.target;
+
+  if (t.dataset.metadataBadge) {
+    toggleMetadataMenu(t, t.dataset.metadataBadge);
+    return;
+  }
+  if (t.dataset.markSourceIncomplete) {
+    const id = t.dataset.markSourceIncomplete;
+    await api(`/posts/${id}/mark-source-incomplete`, { method: 'POST', body: JSON.stringify({ sourceIncomplete: true }) });
+    markPostSourceIncomplete(state, Number(id), true);
+    closeMetadataMenu();
+    return;
+  }
+  if (t.dataset.unmarkSourceIncomplete) {
+    const id = t.dataset.unmarkSourceIncomplete;
+    await api(`/posts/${id}/mark-source-incomplete`, { method: 'POST', body: JSON.stringify({ sourceIncomplete: false }) });
+    markPostSourceIncomplete(state, Number(id), false);
+    closeMetadataMenu();
+    return;
+  }
+  if (!metadataMenu.classList.contains('hidden')) closeMetadataMenu();
   // Frequent per-item actions: fire the request and let the resulting
   // job:created/job:updated/job:deleted WS event update the UI — no full
   // list refetch per click.
@@ -280,6 +330,23 @@ tabCrawl.onclick = () => {
   panelCrawl.classList.remove('hidden');
   panelNewPosts.classList.add('hidden');
 };
+
+// ── collapsible detailed filters (search stays visible) ──
+const FILTERS_COLLAPSED_KEY = 'pahe.filtersCollapsed';
+const filterDetails = $('#filterDetails');
+const btnToggleFilters = $('#btnToggleFilters');
+if (btnToggleFilters && filterDetails) {
+  const setCollapsed = (collapsed) => {
+    filterDetails.classList.toggle('collapsed', collapsed);
+    btnToggleFilters.textContent = collapsed ? '▸ Filters' : '▾ Filters';
+  };
+  setCollapsed(localStorage.getItem(FILTERS_COLLAPSED_KEY) === '1');
+  btnToggleFilters.onclick = () => {
+    const nowCollapsed = !filterDetails.classList.contains('collapsed');
+    setCollapsed(nowCollapsed);
+    localStorage.setItem(FILTERS_COLLAPSED_KEY, nowCollapsed ? '1' : '0');
+  };
+}
 
 // ── bulk queue actions ──
 $('#btnRetryAllJobs').onclick = async () => {

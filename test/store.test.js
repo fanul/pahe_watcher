@@ -365,6 +365,30 @@ test('listPostsMissingExtendedMetadata / countPostsMissingExtendedMetadata: sync
   assert.equal(store.countPostsMissingExtendedMetadata(), 1);
 });
 
+test('markPostSourceIncomplete excludes a post from the metadata-backfill sweep and survives a resync', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [4, 5]);
+
+  store.markPostSourceIncomplete(4, true);
+  assert.equal(store.getPost(4).metadataSourceIncomplete, true);
+  assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [5]);
+  assert.equal(store.countPostsMissingExtendedMetadata(), 1);
+
+  // A full-replace resync (markPost re-inserting the same post) must not clear the flag —
+  // it's a durable manual annotation, not sync-derived state (same pattern as dead_reported_at).
+  store.markPost({ ...store.getPost(4), id: 4 });
+  assert.equal(store.getPost(4).metadataSourceIncomplete, true);
+  assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [5]);
+
+  // Unmarking brings it back into the sweep.
+  store.markPostSourceIncomplete(4, false);
+  assert.equal(store.getPost(4).metadataSourceIncomplete, false);
+  assert.deepEqual(store.listPostsMissingExtendedMetadata(10), [4, 5]);
+});
+
 test('listStaleSeriesPostIds / countStaleSeries: detects series whose title claims more seasons than are stored', (t) => {
   const { store, dir } = tmpStore();
   cleanup(t, dir, store);
@@ -418,6 +442,18 @@ test('queryPosts: metadataComplete filter — posts 1/2/3 are complete, posts 4/
   assert.deepEqual(store.queryPosts({ metadataComplete: 'complete' }).items.map((p) => p.id).sort(), [1, 2, 3]);
   assert.deepEqual(store.queryPosts({ metadataComplete: 'incomplete' }).items.map((p) => p.id).sort(), [4, 5]);
   assert.equal(store.queryPosts({ metadataComplete: 'all' }).total, 5);
+});
+
+test('queryPosts: metadataComplete "source-incomplete" filter is its own bucket, excluded from "incomplete"', (t) => {
+  const { store, dir } = tmpStore();
+  cleanup(t, dir, store);
+  seedForQuery(store);
+
+  store.markPostSourceIncomplete(4, true);
+
+  assert.deepEqual(store.queryPosts({ metadataComplete: 'source-incomplete' }).items.map((p) => p.id), [4]);
+  assert.deepEqual(store.queryPosts({ metadataComplete: 'incomplete' }).items.map((p) => p.id), [5]);
+  assert.equal(store.queryPosts({ metadataComplete: 'all' }).total, 5); // still counted overall, just re-bucketed
 });
 
 test('queryPosts: deadLink filter matches jobs.post_link = posts.link regardless of how the job was created', (t) => {

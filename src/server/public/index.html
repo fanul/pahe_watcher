@@ -41,6 +41,9 @@
     </menu>
   </dialog>
 
+  <!-- Shared floating menu for the per-card metadata badge (positioned via JS next to whichever badge was clicked). -->
+  <div id="metadataBadgeMenu" class="badge-menu hidden"></div>
+
   <main class="grid">
     <section class="panel">
       <div class="tabs-header">
@@ -50,11 +53,14 @@
       
       <div id="panelNewPosts" class="tab-content">
         <!-- Global Filter Bar -->
-        <div class="filter-bar">
-          <div class="filter-group" style="grid-column: 1 / -1;">
+        <div class="filter-bar-search">
+          <div class="filter-group" style="flex: 1;">
             <label for="filterSearch">Search Title</label>
             <input id="filterSearch" type="text" placeholder="Search keywords (flexible)..." class="filter-select" style="cursor: text;" />
           </div>
+          <button type="button" id="btnToggleFilters" class="btn small ghost" title="Show/hide detailed filters">▾ Filters</button>
+        </div>
+        <div class="filter-bar" id="filterDetails">
           <div class="filter-group">
             <label for="filterType">Type</label>
             <select id="filterType" class="filter-select">
@@ -142,6 +148,7 @@
               <option value="all">All</option>
               <option value="complete">Complete</option>
               <option value="incomplete">Incomplete</option>
+              <option value="source-incomplete">Source Incomplete</option>
             </select>
           </div>
           <div class="filter-group">
@@ -197,7 +204,7 @@
               Batch size:
               <input id="metadataBackfillBatchSize" type="number" value="20" min="1" max="1000" style="width: 70px; padding: 4px 8px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text);" />
             </label>
-            <button id="btnMetadataBackfillSweep" class="btn small ghost" title="Bulk-resync every post currently flagged with incomplete metadata (the same yellow-badge/filter criteria used elsewhere in the app)">Resync incomplete metadata</button>
+            <button id="btnMetadataBackfillSweep" class="btn small ghost" title="Bulk-resync every post currently flagged with incomplete metadata (the same yellow-badge/filter criteria used elsewhere in the app) — posts manually marked &quot;Source incomplete&quot; are excluded">Resync incomplete metadata</button>
           </div>
         </div>
         <div class="crawl-controls" style="margin-top: 8px;">

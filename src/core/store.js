@@ -79,11 +79,15 @@ export class Store {
       markOptionReportedByLink: this.db.prepare(
         'UPDATE post_options SET dead_reported_at = ? WHERE url = ? AND post_id = (SELECT id FROM posts WHERE link = ?)',
       ),
+      // metadata_source_incomplete is deliberately NOT in the ON CONFLICT SET
+      // list — it's a durable manual annotation (like dead_reported_at),
+      // never touched by a resync's full upsert. Only markPostSourceIncomplete
+      // changes it. New rows always start unflagged (NULL).
       upsertPost: this.db.prepare(`
         INSERT INTO posts (id, title, link, date, seen_at, poster, rating, synopsis, is_series, page_found, content_synced_at,
-                            year, genre, duration_minutes, director, creator, actors, metadata_complete)
+                            year, genre, duration_minutes, director, creator, actors, metadata_complete, metadata_source_incomplete)
         VALUES (@id, @title, @link, @date, @seen_at, @poster, @rating, @synopsis, @is_series, @page_found, @content_synced_at,
-                @year, @genre, @duration_minutes, @director, @creator, @actors, @metadata_complete)
+                @year, @genre, @duration_minutes, @director, @creator, @actors, @metadata_complete, NULL)
         ON CONFLICT(id) DO UPDATE SET
           title=excluded.title, link=excluded.link, date=excluded.date, seen_at=excluded.seen_at,
           poster=excluded.poster, rating=excluded.rating, synopsis=excluded.synopsis,
@@ -92,6 +96,7 @@ export class Store {
           director=excluded.director, creator=excluded.creator, actors=excluded.actors,
           metadata_complete=excluded.metadata_complete
       `),
+      markPostSourceIncomplete: this.db.prepare('UPDATE posts SET metadata_source_incomplete = ? WHERE id = ?'),
       countPosts: this.db.prepare('SELECT COUNT(*) AS n FROM posts'),
       countJobs: this.db.prepare('SELECT COUNT(*) AS n FROM jobs'),
       getJob: this.db.prepare('SELECT * FROM jobs WHERE id = ?'),
@@ -108,11 +113,14 @@ export class Store {
       `),
       unsyncedPostIds: this.db.prepare('SELECT id FROM posts WHERE content_synced_at IS NULL ORDER BY id ASC LIMIT ?'),
       countUnsyncedPosts: this.db.prepare('SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NULL'),
+      // Excludes metadata_source_incomplete=1 rows — the user has confirmed
+      // pahe.ink's own page never had this data, so re-fetching it forever
+      // would be pointless churn.
       missingExtendedMetadataIds: this.db.prepare(
-        "SELECT id FROM posts WHERE content_synced_at IS NOT NULL AND (metadata_complete IS NULL OR metadata_complete = 0) ORDER BY id ASC LIMIT ?",
+        "SELECT id FROM posts WHERE content_synced_at IS NOT NULL AND (metadata_complete IS NULL OR metadata_complete = 0) AND (metadata_source_incomplete IS NULL OR metadata_source_incomplete = 0) ORDER BY id ASC LIMIT ?",
       ),
       countMissingExtendedMetadata: this.db.prepare(
-        "SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NOT NULL AND (metadata_complete IS NULL OR metadata_complete = 0)",
+        "SELECT COUNT(*) AS n FROM posts WHERE content_synced_at IS NOT NULL AND (metadata_complete IS NULL OR metadata_complete = 0) AND (metadata_source_incomplete IS NULL OR metadata_source_incomplete = 0)",
       ),
       distinctYears: this.db.prepare('SELECT DISTINCT year FROM posts WHERE year IS NOT NULL ORDER BY year DESC'),
       distinctGenres: this.db.prepare("SELECT DISTINCT genre FROM posts WHERE genre IS NOT NULL AND genre != ''"),
@@ -391,7 +399,15 @@ export class Store {
     else if (duration === 'long') where.push('posts.duration_minutes IS NOT NULL AND posts.duration_minutes > 150');
 
     if (metadataComplete === 'complete') where.push('posts.metadata_complete = 1');
-    else if (metadataComplete === 'incomplete') where.push('(posts.metadata_complete IS NULL OR posts.metadata_complete = 0)');
+    else if (metadataComplete === 'incomplete') {
+      // "Incomplete" means still-pending/eligible for resync — a post the
+      // user has manually flagged as source-incomplete has its own bucket
+      // below and is deliberately excluded here.
+      where.push('(posts.metadata_complete IS NULL OR posts.metadata_complete = 0)');
+      where.push('(posts.metadata_source_incomplete IS NULL OR posts.metadata_source_incomplete = 0)');
+    } else if (metadataComplete === 'source-incomplete') {
+      where.push('posts.metadata_source_incomplete = 1');
+    }
 
     if (deadLink === 'dead') {
       where.push("EXISTS (SELECT 1 FROM jobs WHERE jobs.post_link = posts.link AND jobs.status = 'dead')");
@@ -437,6 +453,11 @@ export class Store {
 
   countPostsMissingExtendedMetadata() {
     return this._stmt.countMissingExtendedMetadata.get().n;
+  }
+
+  /** Manually flags (or unflags) a post as "source incomplete" — the user has confirmed pahe.ink's own page never had this metadata, so it's excluded from the batch metadata-backfill sweep. */
+  markPostSourceIncomplete(postId, flag) {
+    this._stmt.markPostSourceIncomplete.run(flag ? 1 : 0, Number(postId));
   }
 
   /** Marks a specific download option as having had a dead-link report submitted for it. */
@@ -511,6 +532,7 @@ export class Store {
       creator: row.creator || '',
       actors: row.actors || '',
       metadataComplete: Boolean(row.metadata_complete),
+      metadataSourceIncomplete: Boolean(row.metadata_source_incomplete),
       hasDeadJob: row.has_dead_job === undefined ? undefined : Boolean(row.has_dead_job),
       options: options ?? this._stmt.getPostOptions.all(row.id).map((r) => this._hydrateOption(r)),
     };

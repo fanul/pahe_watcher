@@ -136,6 +136,18 @@ export function createApiRouter(app) {
     res.json(store.getPost(post.id));
   });
 
+  // Manually flags a post's incomplete metadata as "the source (pahe.ink)
+  // never had this data" rather than "our parser hasn't caught up yet" —
+  // excludes it from the batch "Resync incomplete metadata" sweep so it
+  // isn't refetched forever for data that will never appear.
+  router.post('/posts/:id/mark-source-incomplete', (req, res) => {
+    const post = store.getPost(req.params.id);
+    if (!post) return res.status(404).json({ error: 'not found' });
+    const flag = req.body?.sourceIncomplete !== false;
+    store.markPostSourceIncomplete(post.id, flag);
+    res.json(store.getPost(post.id));
+  });
+
   // Enqueue resolution jobs for a post's matching options.
   router.post('/posts/:id/resolve', async (req, res) => {
     let post = store.getPost(req.params.id);
