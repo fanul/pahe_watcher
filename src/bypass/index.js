@@ -9,6 +9,30 @@ const log = createLogger('bypass');
 
 const FINAL_HOST_RE = /(drive\.google\.com|googleusercontent\.com|pixeldrain\.|pixeldra\.in|workers\.dev|\.r2\.)/i;
 
+// Some shorteners' page automation replicates a click handler's navigation
+// logic (e.g. reading an atob()-encoded query string off a script tag)
+// without dispatching a real trusted click — if the destination validates
+// that a genuine click happened, it bounces back to the exact same URL, the
+// automation re-triggers, and it repeats forever until the job timeout.
+// Confirmed live on linegee.net. STUCK_LOOP_THRESHOLD consecutive reloads of
+// the *same* URL is treated as unrecoverable rather than silently burning
+// the whole timeout on a chain that will never progress.
+export const STUCK_LOOP_THRESHOLD = 6;
+
+/**
+ * Pure tracker for "has this exact URL reloaded STUCK_LOOP_THRESHOLD times in
+ * a row" — kept separate from the Playwright event wiring in `resolve()` so
+ * the detection logic itself is unit-testable without mocking a Page.
+ * @param {{lastUrl: string|null, repeatCount: number}} state mutated in place
+ * @param {string} url the newly-navigated-to URL
+ * @returns {boolean} true once the threshold is reached (fires only once — subsequent calls at the same count return false again until it climbs past the threshold again, since state.repeatCount keeps incrementing)
+ */
+export function trackUrlRepeat(state, url) {
+  state.repeatCount = url === state.lastUrl ? state.repeatCount + 1 : 1;
+  state.lastUrl = url;
+  return state.repeatCount === STUCK_LOOP_THRESHOLD;
+}
+
 /**
  * BypassEngine drives one job from a shortener entry URL through the ad chain to
  * the final Google Drive (or pixeldrain/direct) link.
@@ -88,23 +112,31 @@ export class BypassEngine {
 
     const hops = [];
     let settled = null;
+    let stuckLoopError = null;
 
     const activePages = new Set([page]);
     const navListeners = new Map();
 
     const trackPage = (p) => {
+      const repeatState = { lastUrl: null, repeatCount: 0 };
       const navListener = (frame) => {
         if (frame === p.mainFrame()) {
           const u = frame.url();
           if (u && u !== 'about:blank') {
             hops.push(u);
             ctx.log?.(`→ ${shorten(u)}`);
+
+            if (trackUrlRepeat(repeatState, u) && !stuckLoopError) {
+              stuckLoopError = new Error(
+                `Stuck in a redirect loop at ${shorten(u)} — the same page reloaded ${repeatState.repeatCount} times in a row without progressing. This shortener step likely requires interaction the automation can't replicate.`,
+              );
+            }
           }
         }
       };
       p.on('framenavigated', navListener);
       navListeners.set(p, navListener);
-      
+
       p.once('close', () => {
         p.off('framenavigated', navListener);
         navListeners.delete(p);
@@ -127,7 +159,7 @@ export class BypassEngine {
       ctx.log?.(`Starting: ${job.provider} ${job.quality || ''} — ${shorten(job.url)}`);
       await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
 
-      settled = await this._driveToFinal(activePages, ctx, timeoutMs);
+      settled = await this._driveToFinal(activePages, ctx, timeoutMs, () => stuckLoopError);
       if (!settled) throw new Error('Timed out before reaching a final link');
 
       // Whichever Drive URL shape got captured (varies by which link/button
@@ -158,19 +190,25 @@ export class BypassEngine {
   /**
    * Poll all active pages/tabs in the context until one reaches GDFlix or a final host directly.
    */
-  async _driveToFinal(activePages, ctx, timeoutMs) {
+  async _driveToFinal(activePages, ctx, timeoutMs, getStuckLoopError) {
     const deadline = Date.now() + timeoutMs;
     let handledGdflix = false;
     let handledGoogleAuth = false;
     const deadCheckedUrls = new Set();
 
     const WHITELIST_DOMAINS = this.config?.bypass?.tabPruningWhitelist || [
-      'pahe.plus', 'old.pahe.plus', 'ouo.io', 'ouo.press', 'gdflix', 'drive.google', 
-      'pixeldrain', 'pixeldra.in', 'teknoasian.com', 'spacetica.com', 'oii.la', 'linegee.net', 
+      'pahe.plus', 'old.pahe.plus', 'ouo.io', 'ouo.press', 'gdflix', 'drive.google',
+      'pixeldrain', 'pixeldra.in', 'teknoasian.com', 'spacetica.com', 'oii.la', 'linegee.net',
       'tpi.li', 'wordcounter.icu', 'about:blank'
     ];
 
     while (Date.now() < deadline) {
+      const stuckLoopError = getStuckLoopError?.();
+      if (stuckLoopError) {
+        ctx.log?.(`✖ ${stuckLoopError.message}`);
+        throw stuckLoopError;
+      }
+
       const pages = Array.from(activePages).filter(p => !p.isClosed());
       if (pages.length === 0) {
         throw new Error('All browser pages/tabs were closed');
