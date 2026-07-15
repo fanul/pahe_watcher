@@ -201,6 +201,58 @@ test('sweepMetadataBackfill fills in year/genre/director for posts synced under 
   assert.deepEqual(store.listPostsMissingExtendedMetadata(10), []);
 });
 
+test('deepSyncPost does not mark a post complete when its IMDb metadata parsed fine but every download option came out with no resolvable quality', async (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  // Fully-populated imdbwp block (metadata-wise this alone would be
+  // "complete"), but the download-options section uses a layout the parser
+  // can't extract quality from (an unrecognized heading right before the
+  // anchors) — regression guard for a real case where a resynced post kept
+  // showing "unknown · x264 · N/A" chips despite losing its incomplete-
+  // metadata badge.
+  const html = `
+    <div class="imdbwp__thumb"><img class="imdbwp__img" src="https://example.com/poster.jpg"></div>
+    <div class="imdbwp__header"><span class="imdbwp__title">Mystery Layout</span> (2026)</p>
+    <div class="imdbwp__meta"><span>110 min</span>|<span>Horror, Sci-Fi</span>|<span>29 May 2026</span></div>
+    <div class="imdbwp__belt"><span class="imdbwp__star">7.0</span></div>
+    <div class="imdbwp__teaser">A synopsis</div>
+    <div class="imdbwp__footer"><strong>Director:</strong> <span>Someone</span><br /><strong>Actors:</strong> <span>Someone Actor</span></div>
+    <div class="box download"><div class="box-inner-block">
+      <b>New Layout Heading</b><br />
+      <a href="https://teknoasian.com/?ht=noqual">GD</a>
+    </div></div>
+  `;
+  const client = { async getPost(id) { return { id, date: '2026-01-01T00:00:00', link: 'https://pahe.ink/mystery', title: 'Mystery Layout', contentHtml: html }; } };
+  const engine = new SyncEngine({ config: BASE_CONFIG, store, client, queue: fakeQueue() });
+
+  const entry = await engine.deepSyncPost(999);
+  assert.equal(entry.options.length, 1);
+  assert.equal(entry.options[0].quality, null); // confirms the fixture actually hits the "no quality parsed" case
+  assert.equal(entry.metadataComplete, false);
+  assert.equal(store.getPost(999).metadataComplete, false);
+});
+
+test('deepSyncPost still marks a post complete when it legitimately has zero download options (not a parsing failure)', async (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const html = `
+    <div class="imdbwp__thumb"><img class="imdbwp__img" src="https://example.com/poster.jpg"></div>
+    <div class="imdbwp__header"><span class="imdbwp__title">No Links Yet</span> (2026)</p>
+    <div class="imdbwp__meta"><span>110 min</span>|<span>Horror</span>|<span>29 May 2026</span></div>
+    <div class="imdbwp__belt"><span class="imdbwp__star">7.0</span></div>
+    <div class="imdbwp__teaser">A synopsis</div>
+    <div class="imdbwp__footer"><strong>Director:</strong> <span>Someone</span><br /><strong>Actors:</strong> <span>Someone Actor</span></div>
+  `;
+  const client = { async getPost(id) { return { id, date: '2026-01-01T00:00:00', link: 'https://pahe.ink/no-links', title: 'No Links Yet', contentHtml: html }; } };
+  const engine = new SyncEngine({ config: BASE_CONFIG, store, client, queue: fakeQueue() });
+
+  const entry = await engine.deepSyncPost(998);
+  assert.equal(entry.options.length, 0);
+  assert.equal(entry.metadataComplete, true);
+});
+
 test('sweepStaleSeriesResync re-fetches series posts whose page grew new seasons since our last sync', async (t) => {
   const { store, dir } = tmpStore();
   t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });

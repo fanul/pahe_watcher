@@ -103,6 +103,13 @@ export function parseDownloadOptions(html) {
   let currentLabel = null;
   let currentQuality = null;
   let currentSize = null;
+  // A bare "<b>Season N</b>" heading with no quality/codec baked into the
+  // bold text itself — on this layout, the quality/codec info follows right
+  // after as its own plain-text run with no size figure at all, e.g.
+  // "<b>Season 1</b> BluRay 720p x264<br/>". Consumed by the very next text
+  // node if it carries a quality token; otherwise dropped so it can't leak
+  // into an unrelated later heading.
+  let pendingSeasonHeading = null;
 
   const flat = [];
   flattenNodes($, $.root(), flat);
@@ -114,6 +121,9 @@ export function parseDownloadOptions(html) {
         currentLabel = text;
         currentQuality = (text.match(QUALITY_RE) || [])[0]?.toLowerCase() || null;
         currentSize = null;
+        pendingSeasonHeading = null;
+      } else if (/^season\s*\d+$/i.test(text)) {
+        pendingSeasonHeading = text;
       }
       continue;
     }
@@ -124,14 +134,26 @@ export function parseDownloadOptions(html) {
         currentLabel = plainLabelMatch[1].trim();
         currentQuality = (currentLabel.match(QUALITY_RE) || [])[0]?.toLowerCase() || null;
         currentSize = plainLabelMatch[2];
+        pendingSeasonHeading = null;
         continue;
       }
+
+      if (pendingSeasonHeading && QUALITY_RE.test(item.text)) {
+        currentLabel = `${pendingSeasonHeading} ${item.text}`.trim();
+        currentQuality = (item.text.match(QUALITY_RE) || [])[0]?.toLowerCase() || null;
+        currentSize = null;
+        pendingSeasonHeading = null;
+        continue;
+      }
+      pendingSeasonHeading = null;
+
       const bareSizeMatch = item.text.match(BARE_SIZE_RE);
       if (bareSizeMatch) currentSize = bareSizeMatch[1];
       continue;
     }
 
     // anchor
+    pendingSeasonHeading = null;
     const el = item.el;
     const $el = $(el);
     const href = $el.attr('href') || '';

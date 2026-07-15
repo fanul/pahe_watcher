@@ -87,6 +87,13 @@ export class SyncEngine {
     }
 
     const isSeries = checkIsSeries(full.title, options);
+    // A post whose IMDb block parsed fine but whose download options all came
+    // out with no resolvable quality (a parser/layout gap, not a real "no
+    // options yet" post) shouldn't read as complete — that's exactly the kind
+    // of gap the "Incomplete metadata" badge exists to surface for a resync.
+    // Posts with zero options at all are left alone here (that's a distinct,
+    // legitimate state, not a parsing failure).
+    const optionsUsable = options.length === 0 || options.some((o) => o.quality);
     const entry = {
       id: postId,
       title: full.title,
@@ -105,7 +112,7 @@ export class SyncEngine {
       director: meta.director,
       creator: meta.creator,
       actors: meta.actors,
-      metadataComplete: meta.metadataComplete,
+      metadataComplete: meta.metadataComplete && optionsUsable,
     };
     const isNew = !existing;
     this.store.markPost(entry);

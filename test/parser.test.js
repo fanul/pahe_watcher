@@ -210,6 +210,45 @@ test('parseDownloadOptions tracks size per sub-tier — Per Episode and Batch un
   assert.equal(batch[0].qualityLabel, 'Season 1 – 720p x264');
 });
 
+// Real markup from https://pahe.ink/transporter-season-1-2-complete-720p/ —
+// a bare "<b>Season N</b>" heading with the quality/codec info as its own
+// plain-text run right after (no <b> wrapper on it, and no size anywhere).
+const BARE_SEASON_HEADING_SAMPLE = `
+  <div class="box download"><div class="box-inner-block">
+    <b>Season 1</b> BluRay 720p x264<br />
+    <a href="https://teknoasian.com/?ht=s1a">UTB</a>
+    <a href="https://teknoasian.com/?ht=s1b">GD1</a>
+  </div></div>
+  <div class="box download"><div class="box-inner-block">
+    <b>Season 2</b> WEB-DL 720p x264<br />
+    <a href="https://teknoasian.com/?ht=s2a">UTB</a>
+  </div></div>
+`;
+
+test('parseDownloadOptions detects quality from a bare "<b>Season N</b>" heading followed by a plain-text quality/codec run, with no size anywhere', () => {
+  const opts = parseDownloadOptions(BARE_SEASON_HEADING_SAMPLE);
+  assert.equal(opts.length, 3);
+  assert.equal(opts[0].quality, '720p');
+  assert.equal(opts[0].qualityLabel, 'Season 1 BluRay 720p x264');
+  assert.equal(opts[0].season, 1);
+  assert.equal(opts[0].sizeLabel, null);
+  assert.equal(opts[2].quality, '720p');
+  assert.equal(opts[2].qualityLabel, 'Season 2 WEB-DL 720p x264');
+  assert.equal(opts[2].season, 2);
+});
+
+test('parseDownloadOptions does not leak a bare "Season N" heading into anchors when no quality text follows it', () => {
+  const html = `
+    <div class="box download"><div class="box-inner-block">
+      <b>Season 1</b><br />
+      <a href="https://teknoasian.com/?ht=noqual">GD</a>
+    </div></div>
+  `;
+  const opts = parseDownloadOptions(html);
+  assert.equal(opts.length, 1);
+  assert.equal(opts[0].quality, null);
+});
+
 test('parseDownloadOptions handles a per-episode size range ("350-500 MB")', () => {
   const html = `
     <div class="box download"><div class="box-inner-block">
