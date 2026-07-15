@@ -47,8 +47,8 @@ Jika Pahe Watcher berjalan di dalam kontainer Docker, ia membutuhkan alamat IP d
 
 1. Buka dashboard web Pahe Watcher Anda.
 2. Buka dialog **⚙ Settings**.
-3. Cari bidang input **Chrome DevTools (CDP) URL (for remote browser)** di bawah bagian *Watcher Settings*.
-4. Masukkan alamat URL CDP sesuai kondisi infrastruktur Anda:
+3. Berikan centang pada opsi **Connect to Remote Browser via CDP** untuk mengaktifkan fitur remote browser.
+4. Masukkan alamat URL CDP pada bidang **Chrome DevTools (CDP) URL (for remote browser)** sesuai dengan kondisi jaringan Anda:
 
    * **Jika Docker dan browser Chrome berjalan di PC yang sama**:
      Masukkan: `http://host.docker.internal:9222`
@@ -57,7 +57,9 @@ Jika Pahe Watcher berjalan di dalam kontainer Docker, ia membutuhkan alamat IP d
    * **Jika Anda tidak menggunakan Docker (menjalankan `npm start` secara lokal)**:
      Masukkan: `http://localhost:9222`
 
-5. Klik tombol **Save** untuk menyimpan dan mengaktifkan setelan tersebut secara instan.
+5. Klik tombol **Save** untuk menyimpan setelan tersebut.
+   > [!NOTE]
+   > Anda dapat mematikan (*ON/OFF*) remote browser kapan saja secara instan dengan mencentang atau menghilangkan centang dari opsi **Connect to Remote Browser via CDP** tanpa perlu menghapus isi kotak URL.
 
 ---
 
