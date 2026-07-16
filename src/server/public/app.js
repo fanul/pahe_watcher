@@ -481,7 +481,24 @@ function refilterPostsSoon(delay = 300) {
 ['#filterType', '#filterProvider', '#filterResolution', '#filterCodec', '#filterGenre', '#filterYear', '#filterDuration', '#filterRating', '#filterSort', '#filterMetadata', '#filterDeadLink'].forEach((sel) => {
   $(sel)?.addEventListener('change', () => refilterPostsSoon(0));
 });
-$('#filterSearch')?.addEventListener('input', () => refilterPostsSoon(300));
+
+const searchInput = $('#filterSearch');
+const searchInputWrap = searchInput?.closest('.search-input-wrap');
+function updateSearchClearVisibility() {
+  searchInputWrap?.classList.toggle('has-value', Boolean(searchInput?.value));
+}
+searchInput?.addEventListener('input', () => {
+  updateSearchClearVisibility();
+  refilterPostsSoon(300);
+});
+$('#btnClearSearch')?.addEventListener('click', () => {
+  if (!searchInput) return;
+  searchInput.value = '';
+  searchInput.focus();
+  updateSearchClearVisibility();
+  refilterPostsSoon(0);
+});
+updateSearchClearVisibility();
 
 // ── log widget toggle ──
 const logWidget = $('#logWidget');

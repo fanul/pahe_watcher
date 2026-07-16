@@ -1,6 +1,7 @@
 import express from 'express';
 import { bus } from '../../core/eventBus.js';
 import { selectOptions, checkIsSeries } from '../../parser/postParser.js';
+import { buildBackupZip, restoreBackupZip } from '../../core/backup.js';
 
 /** Same derivation the chip UI uses (src/server/public/js/posts.js) to label a link's codec from its raw quality label. */
 function deriveCodec(qualityLabel) {
@@ -361,6 +362,43 @@ export function createApiRouter(app) {
   // ── sheets ──
   router.get('/sheets/test', async (req, res) => {
     res.json(await sheets.testConnection());
+  });
+
+  // ── backup (export/import full config + database as a zip) ──
+  router.get('/backup/export', (req, res) => {
+    try {
+      const buffer = buildBackupZip({ store, runtime });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      res.set('Content-Type', 'application/zip');
+      res.set('Content-Disposition', `attachment; filename="pahe-watcher-backup-${stamp}.zip"`);
+      res.send(buffer);
+    } catch (err) {
+      res.status(500).json({ error: `Failed to build backup: ${err.message}` });
+    }
+  });
+
+  // Body is the raw uploaded zip file, not JSON — parsed only on this route
+  // so the global express.json() middleware doesn't try (and fail) on it.
+  router.post('/backup/import', express.raw({ type: '*/*', limit: '1gb' }), (req, res) => {
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ error: 'Request body must be the raw .zip file' });
+    }
+    try {
+      restoreBackupZip(req.body, {
+        sqlitePath: runtime.store.sqlitePath,
+        serviceAccountKeyPath: runtime.sheets.serviceAccountKey,
+      });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    res.json({ ok: true, restarting: true });
+    // node:sqlite holds the previous db file open — a fresh process is the
+    // only safe way to pick up the replacement. Under Docker
+    // (restart: unless-stopped) or any process supervisor this comes back up
+    // automatically; run standalone, it needs a manual restart.
+    setTimeout(() => {
+      app.shutdown().catch(() => {}).finally(() => process.exit(0));
+    }, 250);
   });
 
   return router;

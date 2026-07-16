@@ -52,7 +52,10 @@
         <div class="filter-bar-search">
           <div class="filter-group" style="flex: 1;">
             <label for="filterSearch">Search Title</label>
-            <input id="filterSearch" type="text" placeholder="Search keywords (flexible)..." class="filter-select" style="cursor: text;" />
+            <div class="search-input-wrap">
+              <input id="filterSearch" type="text" placeholder="Search keywords (flexible)..." class="filter-select" style="cursor: text;" />
+              <button type="button" id="btnClearSearch" class="search-clear-btn" title="Clear search" aria-label="Clear search">&times;</button>
+            </div>
           </div>
           <button type="button" id="btnToggleFilters" class="btn small ghost" title="Show/hide detailed filters">▾ Filters</button>
         </div>
@@ -508,6 +511,20 @@
             link hits a Google sign-in wall (e.g. an account-restricted file). Export cookies from an
             already-signed-in Google session and paste them here. Always remapped to <code>.google.com</code>
             regardless of which Google subdomain they were recorded for.
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Backup &amp; Restore</legend>
+          <div class="muted small" style="margin-bottom: 10px;">
+            Exports the full database (posts, jobs, and all settings above) plus the Google Sheets service-account
+            key, if any, as a single .zip. Importing replaces all of it and restarts the server.
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+            <button type="button" id="btnExportBackup" class="btn ghost" style="padding: 4px 10px; font-size: 11px; height: auto;">⬇ Export .zip</button>
+            <input type="file" id="inputImportBackup" accept=".zip" style="display: none;" />
+            <button type="button" id="btnImportBackup" class="btn ghost" style="padding: 4px 10px; font-size: 11px; height: auto;">⬆ Import .zip</button>
+            <span id="backupStatus" class="muted small"></span>
           </div>
         </fieldset>
       </div>

@@ -599,6 +599,43 @@ body {
   border-color: var(--accent);
 }
 
+.search-input-wrap {
+  position: relative;
+}
+
+.search-input-wrap .filter-select {
+  padding-right: 28px;
+}
+
+.search-clear-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.search-clear-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.search-input-wrap.has-value .search-clear-btn {
+  display: flex;
+}
+
 .chips {
   display: flex;
   flex-direction: column;

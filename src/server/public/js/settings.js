@@ -8,6 +8,7 @@ import { populateGdflixSettings, serializeGdflixSettings, initGdflixSettings } f
 import { populateGoogleSettings, serializeGoogleSettings } from './settings/google.js';
 import { populateSyncSettings, serializeSyncSettings } from './settings/sync.js';
 import { populateDeadLinkReportSettings, serializeDeadLinkReportSettings } from './settings/deadLinkReport.js';
+import { initBackupSettings } from './settings/backup.js';
 
 export function applyLayoutMode() {
   const mode = localStorage.getItem('layoutMode') || 'stay-on-top';
@@ -24,6 +25,7 @@ export function initSettings(refreshAll) {
 
   providerSelect.addEventListener('change', () => updateGroupVisibility(f));
   initGdflixSettings(f);
+  initBackupSettings();
 
   $('#btnSettings').onclick = async () => {
     const cfg = await api('/config');
