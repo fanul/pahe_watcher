@@ -53,22 +53,37 @@
         }
       }
 
-      // 3. linegee.net — the real "Continue" button's click handler opens an
-      // ad popup (window.open) *before* navigating the current tab via this
-      // same atob()-encoded query string. Firing the navigation almost
-      // immediately (the old 200ms delay) outraces whatever the popup needs
-      // to register server-side, so the destination bounces back to this
-      // exact same page — an infinite loop (see the stuck-loop guard in
-      // src/bypass/index.js). A generous delay gives that popup time to
-      // load first, same as a real human clicking through it.
-      if (/linegee\.net/.test(o) && document.readyState === 'complete') {
-        document.querySelectorAll('script').forEach((s) => {
-          if (/location\.href.*atob/.test(s.textContent) && !window.__done) {
-            const b64 = s.textContent.replace(/[\t\s]/g, '').replace(/^.*location.href.*atob\('(.*)'\).*/, '$1');
-            window.__done = true;
-            setTimeout(() => { window.location.href = window.location.href + atob(b64); }, 5000);
+      // 3. linegee.net — handles both script-based atob navigation and direct Continue buttons/forms
+      if (/linegee\.net/.test(o)) {
+        // Option A: Script-extracted atob query string navigation
+        if (document.readyState === 'complete') {
+          document.querySelectorAll('script').forEach((s) => {
+            if (/location\.href.*atob/.test(s.textContent) && !window.__done) {
+              const b64 = s.textContent.replace(/[\t\s]/g, '').replace(/^.*location.href.*atob\('(.*)'\).*/, '$1');
+              window.__done = true;
+              console.log('[pahe-auto] [linegee.net] Found atob redirect token. Navigating in 5s...');
+              setTimeout(() => { window.location.href = window.location.href + atob(b64); }, 5000);
+            }
+          });
+        }
+
+        // Option B: Continue button / form click
+        if (!window.__done) {
+          const btn = document.querySelector('a.get-link:not(.disabled), a.btn-success[href], button#btn-main, form#go-link button, .btn-captcha');
+          if (btn) {
+            const rawHref = btn.href || btn.getAttribute('href');
+            if (rawHref && /^https?:\/\//i.test(rawHref) && !rawHref.includes('linegee.net')) {
+              window.__done = true;
+              console.log('[pahe-auto] [linegee.net] Direct external Continue link ready: ' + rawHref);
+              window.location.assign(rawHref);
+            } else if (!window.__clickedLinegee) {
+              window.__clickedLinegee = true;
+              console.log('[pahe-auto] [linegee.net] Clicking Continue button');
+              btn.removeAttribute('disabled');
+              btn.click();
+            }
           }
-        });
+        }
       }
 
       // 4. wordcounter.icu
