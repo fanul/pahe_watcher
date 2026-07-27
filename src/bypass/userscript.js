@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const teknoasianRule = fs.readFileSync(path.join(__dirname, 'rules/teknoasian.js'), 'utf8');
 const paheRule = fs.readFileSync(path.join(__dirname, 'rules/pahe.js'), 'utf8');
 const ouoRule = fs.readFileSync(path.join(__dirname, 'rules/ouo.js'), 'utf8');
+const oiilaRule = fs.readFileSync(path.join(__dirname, 'rules/oiila.js'), 'utf8');
 const fallbackRule = fs.readFileSync(path.join(__dirname, 'rules/fallback.js'), 'utf8');
 
 export const AD_HOSTS = [
@@ -271,7 +272,9 @@ export function getInjectedAutomationScript(config = {}) {
       'pahe.plus': (${paheRule}),
       'old.pahe.plus': (${paheRule}),
       'ouo.io': (${ouoRule}),
-      'ouo.press': (${ouoRule})
+      'ouo.press': (${ouoRule}),
+      'oii.la': (${oiilaRule}),
+      'tpi.li': (${oiilaRule})
     };
 
     const getActiveRule = () => {

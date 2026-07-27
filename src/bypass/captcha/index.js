@@ -37,24 +37,36 @@ export async function detectCaptcha(page) {
   return page
     .evaluate(() => {
       const find = (sel) => document.querySelector(sel);
-      if (find('iframe[src*="recaptcha/api2/anchor"], .g-recaptcha, #recaptcha')) {
-        const el = find('.g-recaptcha');
-        return { present: true, kind: 'recaptcha-v2', siteKey: el?.getAttribute('data-sitekey') || null };
+      if (find('iframe[src*="recaptcha/api2/anchor"], .g-recaptcha, #recaptcha, [data-sitekey]')) {
+        const el = find('.g-recaptcha') || find('[data-sitekey]');
+        let siteKey = el?.getAttribute('data-sitekey') || null;
+        if (!siteKey) {
+          const ifr = find('iframe[src*="recaptcha"]');
+          const m = ifr?.getAttribute('src')?.match(/[?&]k=([^&]+)/);
+          if (m) siteKey = decodeURIComponent(m[1]);
+        }
+        if (siteKey) {
+          return { present: true, kind: 'recaptcha-v2', siteKey };
+        }
       }
       if (find('iframe[src*="hcaptcha.com"], .h-captcha')) {
         const el = find('.h-captcha');
-        return { present: true, kind: 'hcaptcha', siteKey: el?.getAttribute('data-sitekey') || null };
+        let siteKey = el?.getAttribute('data-sitekey') || null;
+        if (!siteKey) {
+          const ifr = find('iframe[src*="hcaptcha.com"]');
+          const m = ifr?.getAttribute('src')?.match(/[?&]sitekey=([^&]+)/);
+          if (m) siteKey = decodeURIComponent(m[1]);
+        }
+        return { present: true, kind: 'hcaptcha', siteKey };
       }
       if (find('iframe[src*="challenges.cloudflare.com"], .cf-turnstile')) {
         const el = find('.cf-turnstile') || find('[data-sitekey]');
-        // sitekey can live on the widget div OR in the challenge iframe src (?k=...)
         let siteKey = el?.getAttribute('data-sitekey') || null;
         if (!siteKey) {
           const ifr = find('iframe[src*="challenges.cloudflare.com"]');
           const m = ifr?.getAttribute('src')?.match(/[?&/](?:k|sitekey)[=/]([^&?/]+)/);
           if (m) siteKey = decodeURIComponent(m[1]);
         }
-        // Whether the widget already produced a token (auto-passed via stealth).
         const respEl = find('[name="cf-turnstile-response"]');
         const solvedToken = respEl && respEl.value ? respEl.value : null;
         return {
