@@ -318,3 +318,16 @@ test('runLivePoll skips auto-resolve for an in-progress series without "Complete
   await engine.runLivePoll();
   assert.equal(queue.enqueued.length, 0); // no "Complete" in title, onlyCompleteSeries=true -> skipped
 });
+
+test('runLivePoll with isInitial=true syncs posts to DB but skips enqueuing to queue', async (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const { client } = makeFakeCatalog(5);
+  const queue = fakeQueue();
+  const engine = new SyncEngine({ config: BASE_CONFIG, store, client, queue });
+
+  const pollResult = await engine.runLivePoll({ isInitial: true });
+  assert.equal(pollResult.found, 5); // 5 new posts deep-synced to DB
+  assert.equal(queue.enqueued.length, 0); // 0 jobs enqueued on initial load
+});

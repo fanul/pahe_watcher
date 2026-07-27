@@ -27,8 +27,8 @@ export class Watcher {
     if (this.timer) return;
     const ms = Math.max(15, this.config.watcher.pollIntervalSeconds) * 1000;
     log.info(`Watcher started (interval ${this.config.watcher.pollIntervalSeconds}s)`);
-    // fire immediately, then on the interval
-    this.poll().catch((e) => log.error('Initial poll failed', { error: String(e) }));
+    // fire immediately (initial load: sync newest posts to DB only, skip auto-enqueue to queue)
+    this.poll({ isInitial: true }).catch((e) => log.error('Initial poll failed', { error: String(e) }));
     this.timer = setInterval(() => {
       this.poll().catch((e) => log.error('Poll failed', { error: String(e) }));
     }, ms);
@@ -66,7 +66,7 @@ export class Watcher {
   }
 
   /** One live-polling cycle. Safe to call manually (GUI "Check now"). */
-  async poll() {
+  async poll(opts = {}) {
     if (this.running) {
       log.debug('Poll already in progress, skipping');
       return { skipped: true };
@@ -77,7 +77,7 @@ export class Watcher {
     }
     this.running = true;
     try {
-      return await this.syncEngine.runLivePoll();
+      return await this.syncEngine.runLivePoll(opts);
     } catch (err) {
       log.error('Poll error', { error: String(err) });
       throw err;

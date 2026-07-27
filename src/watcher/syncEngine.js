@@ -134,7 +134,7 @@ export class SyncEngine {
    * new, then auto-resolve per the existing preferred-provider/quality
    * config. Same return shape as before ({found}).
    */
-  async runLivePoll() {
+  async runLivePoll({ isInitial = false, skipAutoResolve = false } = {}) {
     const posts = await this.client.getLatestPosts(this.config.watcher.perPage);
     posts.sort((a, b) => (a.date > b.date ? 1 : -1)); // oldest-first
 
@@ -144,7 +144,11 @@ export class SyncEngine {
       found += 1;
       log.info(`New post: ${post.title}`, { id: post.id });
       const entry = await this.deepSyncPost(post.id);
-      await this._maybeAutoResolve(entry);
+      if (!isInitial && !skipAutoResolve) {
+        await this._maybeAutoResolve(entry);
+      } else {
+        log.info(`Skipping auto-enqueue on initial load/poll for: ${post.title}`, { id: post.id });
+      }
     }
 
     this.store.setMeta('lastPollAt', new Date().toISOString());
