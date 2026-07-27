@@ -20,6 +20,7 @@ export const AD_HOSTS = [
   'old.pahe.plus',
   'oii.la',
   'uii.io',
+  'autoshieldd.com',
   'wp2hostt.com',
   'wordcounter.icu',
   'tpi.li',
@@ -64,6 +65,7 @@ export const AD_HOSTS = [
 // identical click-through automation as blogmystt.com — see fallback.js.
 export const ADBLOCK_GATE_HOSTS = [
   'blogmystt.com',
+  'autoshieldd.com',
   'wp2hostt.com',
   'intercelestial.com',
   'hosttbuzz.com',

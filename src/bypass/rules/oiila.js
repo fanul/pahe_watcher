@@ -32,9 +32,13 @@
       }
 
       // 3. Page 1 (Captcha / Landing form with "Continue")
+      // Wait at least 2500ms for Cloudflare Turnstile / captcha iframe to render into the DOM
+      if (Date.now() - startTime < 2500) {
+        return;
+      }
+
       const captchaForm = document.querySelector('form#form-continue, form#form-captcha, form:not(.td-search-form):not(.go-link)');
       if (captchaForm && !window.__done) {
-        // Check if captcha widget is present and solved, or if no captcha widget exists
         const isSolved = isCaptchaSolved();
         const hasCaptchaWidget = document.querySelector('.g-recaptcha, .h-captcha, .cf-turnstile, iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"]');
 
@@ -45,17 +49,19 @@
             formSubmit(captchaForm);
           }, 500);
         } else {
-          // If captcha is present but not solved yet, click human verify button if available
-          const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
-          for (const btn of buttons) {
-            const text = (btn.textContent || btn.value || '').toLowerCase().trim();
-            if ((text.includes('human') || text.includes('continue') || text.includes('verify') || text.includes('not a robot')) &&
-                btn.offsetParent !== null && !btn.disabled && !window.__clickedHuman) {
-              window.__clickedHuman = true;
-              console.log('[pahe-auto] [oii.la] Page 1: Clicking verification button: ' + text);
-              btn.removeAttribute('disabled');
-              btn.click();
-              break;
+          // If captcha widget is present but not solved yet, click verification button ONCE
+          if (!window.__clickedHuman) {
+            const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
+            for (const btn of buttons) {
+              const text = (btn.textContent || btn.value || '').toLowerCase().trim();
+              if ((text.includes('human') || text.includes('continue') || text.includes('verify') || text.includes('not a robot')) &&
+                  btn.offsetParent !== null && !btn.disabled) {
+                window.__clickedHuman = true;
+                console.log('[pahe-auto] [oii.la] Page 1: Clicking verification button: ' + text);
+                btn.removeAttribute('disabled');
+                btn.click();
+                break;
+              }
             }
           }
         }
