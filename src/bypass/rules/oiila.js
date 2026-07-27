@@ -1,5 +1,5 @@
 {
-  speedup: false, // Server requires 15s real wall-clock time for /links/go validation
+  speedup: false, // Server requires real wall-clock countdown time for /links/go validation
   cleanOverlays: true,
   run: function() {
     try {
@@ -22,6 +22,15 @@
         }
       } catch {}
 
+      // Helper to read current timer countdown value if present
+      const getTimerValue = () => {
+        const timerEl = document.querySelector('#timer, #counter, #countdown, .timer, .countdown, [id*="timer"], [class*="timer"]');
+        if (!timerEl) return 0;
+        const txt = (timerEl.textContent || '').trim();
+        const num = parseInt(txt, 10);
+        return isNaN(num) ? 0 : num;
+      };
+
       // 2. Un-hide Get Link button (KEEP ONCLICK INTACT so AJAX token handler works)
       try {
         document.querySelectorAll('a.get-link, .get-link, #get-link a').forEach((el) => {
@@ -31,29 +40,52 @@
         });
       } catch {}
 
-      // 3. Step 2 (Get Link redirect)
+      // 3. Step 2 (Countdown Page & Get Link)
       const getLinkBtn = document.querySelector('a.get-link, .get-link, #get-link a');
-      if (getLinkBtn && !window.__done) {
+      if (getLinkBtn) {
         const rawHref = getLinkBtn.href || getLinkBtn.getAttribute('href') || getLinkBtn.getAttribute('data-href') || '';
         const isExternalTarget = /^https?:\/\//i.test(rawHref) &&
                                  !rawHref.includes('oii.la') &&
                                  !rawHref.includes('tpi.li') &&
                                  !rawHref.includes('/links/go');
 
-        if (isExternalTarget) {
+        // If the button ALREADY points directly to GDFlix / external URL, redirect immediately
+        if (isExternalTarget && !window.__done) {
           window.__done = true;
-          console.log('[pahe-auto] [oii.la] Direct external link detected. Redirecting to: ' + rawHref);
+          console.log('[pahe-auto] [oii.la] Direct external GDFlix link ready. Redirecting to: ' + rawHref);
           window.location.assign(rawHref);
           return;
         }
 
-        // If link points to /links/go, wait for 15s timer to complete and button to be enabled before clicking
-        const isTimerDone = !getLinkBtn.classList.contains('disabled') && !getLinkBtn.hasAttribute('disabled');
-        if (isTimerDone && !window.__clickedGetLink) {
+        // If link points to /links/go or # or internal URL, MUST WAIT FOR 10-SECOND TIMER TO COMPLETE
+        const secondsRemaining = getTimerValue();
+        const elapsedMs = Date.now() - startTime;
+        const isCountdownFinished = (secondsRemaining <= 0) && (elapsedMs >= 10000);
+
+        if (isCountdownFinished && !window.__clickedGetLink && !window.__done) {
           window.__clickedGetLink = true;
-          console.log('[pahe-auto] [oii.la] 15s countdown finished. Clicking Get Link button (with onclick intact)...');
-          getLinkBtn.click();
+          console.log('[pahe-auto] [oii.la] 10s countdown completed (' + elapsedMs + 'ms elapsed). Triggering Get Link...');
+
+          // Check if rawHref updated to external target right as timer finished
+          const updatedHref = getLinkBtn.href || getLinkBtn.getAttribute('href') || '';
+          if (/^https?:\/\//i.test(updatedHref) && !updatedHref.includes('oii.la') && !updatedHref.includes('/links/go')) {
+            window.__done = true;
+            console.log('[pahe-auto] [oii.la] External link updated after timer: ' + updatedHref);
+            window.location.assign(updatedHref);
+            return;
+          }
+
+          // Otherwise submit form#go-link or click getLinkBtn with handler intact
+          const goForm = document.querySelector('form#go-link, form[action*="links/go"]');
+          if (goForm) {
+            console.log('[pahe-auto] [oii.la] Submitting form#go-link');
+            formSubmit(goForm);
+          } else {
+            console.log('[pahe-auto] [oii.la] Clicking getLinkBtn with handler intact');
+            getLinkBtn.click();
+          }
         }
+        return; // Stop here on Step 2 (do not run Step 1 landing form logic)
       }
 
       // 4. Step 1 (Captcha / Landing form with "Continue")
