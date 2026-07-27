@@ -163,6 +163,15 @@ export function getInjectedAutomationScript(config = {}) {
     const adblockGateHosts = ${JSON.stringify(ADBLOCK_GATE_HOSTS)};
     const startTime = Date.now();
 
+    try {
+      window.canRunAds = true;
+      window.isAdblock = false;
+      window.adBlockDetected = false;
+      window.fuckAdBlock = undefined;
+      window.blockAdBlock = undefined;
+      window.ab = false;
+    } catch {}
+
     console.log('[pahe-auto] Injected on ' + window.location.href);
 
     // Helpers

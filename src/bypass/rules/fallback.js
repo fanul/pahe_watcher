@@ -5,7 +5,37 @@
     try {
       // 1. oii.la / tpi.li
       if (/oii\.la|tpi\.li/.test(o)) {
+        try {
+          // Neutralize Anti-Adblock flags & modals (e.g. FuckAdBlock, SweetAlert, adblock killer overlays)
+          window.fuckAdBlock = undefined;
+          window.blockAdBlock = undefined;
+          window.canRunAds = true;
+          document.querySelectorAll('.swal2-container, .swal-overlay, #adb-modal, div[id*="adblock"], div[class*="adblock"], div[style*="z-index"][style*="fixed"]').forEach((el) => {
+            if (!el.querySelector('.cf-turnstile, iframe[src*="turnstile"]')) {
+              el.remove();
+            }
+          });
+          if (document.body) {
+            document.body.classList.remove('swal2-shown', 'swal2-height-auto', 'modal-open');
+            document.body.style.overflow = 'auto';
+          }
+        } catch {}
+
         pullButton();
+
+        // Step A: First page landing form with "Continue" or "Submit" button
+        const landingForm = document.querySelector('form:not(.td-search-form):not(.go-link)');
+        if (landingForm && !window.__formDone) {
+          const btn = landingForm.querySelector('button, input[type="submit"]');
+          if (btn) {
+            window.__formDone = true;
+            btn.removeAttribute('disabled');
+            console.log('[pahe-auto] Clicking oii.la Continue button');
+            btn.click();
+          }
+        }
+
+        // Step B: Final get-link button redirect
         const b = document.querySelector('.get-link:not(.disabled)');
         if (b && b.href && !window.__done) {
           window.__done = true;
