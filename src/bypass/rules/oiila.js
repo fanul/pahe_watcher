@@ -22,16 +22,31 @@
         }
       } catch {}
 
-      // 2. Page 2 (Final Countdown / Get Link)
-      const b = document.querySelector('.get-link:not(.disabled), a.get-link[href], #get-link a');
-      if (b && b.href && b.href !== '#' && !window.__done) {
-        window.__done = true;
-        console.log('[pahe-auto] [oii.la] Page 2 detected. Redirecting to get-link: ' + b.href);
-        window.location.assign(b.href);
-        return;
+      // 2. Un-hide & enable any Get Link button / link
+      try {
+        document.querySelectorAll('a.get-link, .get-link, #get-link a').forEach((el) => {
+          el.removeAttribute('disabled');
+          el.removeAttribute('onclick');
+          el.classList.remove('disabled');
+          if (el.style.display === 'none') el.style.display = 'inline-block';
+          if (el.style.visibility === 'hidden') el.style.visibility = 'visible';
+          if (el.style.opacity === '0') el.style.opacity = '1';
+        });
+      } catch {}
+
+      // 3. Step 2 (Get Link redirect)
+      const getLinkBtn = document.querySelector('a.get-link, .get-link, #get-link a');
+      if (getLinkBtn && !window.__done) {
+        const rawHref = getLinkBtn.href || getLinkBtn.getAttribute('href') || getLinkBtn.getAttribute('data-href');
+        if (rawHref && rawHref !== '#' && /^https?:\/\//i.test(rawHref)) {
+          window.__done = true;
+          console.log('[pahe-auto] [oii.la] Get Link detected. Redirecting to: ' + rawHref);
+          window.location.assign(rawHref);
+          return;
+        }
       }
 
-      // 3. Page 1 (Captcha / Landing form with "Continue")
+      // 4. Step 1 (Captcha / Landing form with "Continue")
       // Wait at least 2500ms for Cloudflare Turnstile / captcha iframe to render into the DOM
       if (Date.now() - startTime < 2500) {
         return;
