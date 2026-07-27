@@ -38,9 +38,15 @@
       const getLinkBtn = document.querySelector('a.get-link, .get-link, #get-link a');
       if (getLinkBtn && !window.__done) {
         const rawHref = getLinkBtn.href || getLinkBtn.getAttribute('href') || getLinkBtn.getAttribute('data-href');
-        if (rawHref && rawHref !== '#' && /^https?:\/\//i.test(rawHref)) {
+        const isExternalTarget = rawHref &&
+                                 /^https?:\/\//i.test(rawHref) &&
+                                 !rawHref.includes('oii.la') &&
+                                 !rawHref.includes('tpi.li') &&
+                                 !rawHref.includes('/links/go');
+
+        if (isExternalTarget) {
           window.__done = true;
-          console.log('[pahe-auto] [oii.la] Get Link detected. Redirecting to: ' + rawHref);
+          console.log('[pahe-auto] [oii.la] Valid external Get Link ready. Redirecting to: ' + rawHref);
           window.location.assign(rawHref);
           return;
         }
