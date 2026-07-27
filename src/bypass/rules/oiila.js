@@ -1,5 +1,5 @@
 {
-  speedup: true, // Accelerates countdown timer 50x while verification caller protection keeps captchas safe
+  speedup: false, // Server requires 15s real wall-clock time for /links/go validation
   cleanOverlays: true,
   run: function() {
     try {
@@ -22,12 +22,9 @@
         }
       } catch {}
 
-      // 2. Un-hide & enable any Get Link button / link
+      // 2. Un-hide Get Link button (KEEP ONCLICK INTACT so AJAX token handler works)
       try {
         document.querySelectorAll('a.get-link, .get-link, #get-link a').forEach((el) => {
-          el.removeAttribute('disabled');
-          el.removeAttribute('onclick');
-          el.classList.remove('disabled');
           if (el.style.display === 'none') el.style.display = 'inline-block';
           if (el.style.visibility === 'hidden') el.style.visibility = 'visible';
           if (el.style.opacity === '0') el.style.opacity = '1';
@@ -37,18 +34,25 @@
       // 3. Step 2 (Get Link redirect)
       const getLinkBtn = document.querySelector('a.get-link, .get-link, #get-link a');
       if (getLinkBtn && !window.__done) {
-        const rawHref = getLinkBtn.href || getLinkBtn.getAttribute('href') || getLinkBtn.getAttribute('data-href');
-        const isExternalTarget = rawHref &&
-                                 /^https?:\/\//i.test(rawHref) &&
+        const rawHref = getLinkBtn.href || getLinkBtn.getAttribute('href') || getLinkBtn.getAttribute('data-href') || '';
+        const isExternalTarget = /^https?:\/\//i.test(rawHref) &&
                                  !rawHref.includes('oii.la') &&
                                  !rawHref.includes('tpi.li') &&
                                  !rawHref.includes('/links/go');
 
         if (isExternalTarget) {
           window.__done = true;
-          console.log('[pahe-auto] [oii.la] Valid external Get Link ready. Redirecting to: ' + rawHref);
+          console.log('[pahe-auto] [oii.la] Direct external link detected. Redirecting to: ' + rawHref);
           window.location.assign(rawHref);
           return;
+        }
+
+        // If link points to /links/go, wait for 15s timer to complete and button to be enabled before clicking
+        const isTimerDone = !getLinkBtn.classList.contains('disabled') && !getLinkBtn.hasAttribute('disabled');
+        if (isTimerDone && !window.__clickedGetLink) {
+          window.__clickedGetLink = true;
+          console.log('[pahe-auto] [oii.la] 15s countdown finished. Clicking Get Link button (with onclick intact)...');
+          getLinkBtn.click();
         }
       }
 
