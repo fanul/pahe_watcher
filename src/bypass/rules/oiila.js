@@ -1,5 +1,5 @@
 {
-  speedup: false, // Keep normal timer speeds for captcha and countdown sync
+  speedup: true, // Accelerates countdown timer 50x while verification caller protection keeps captchas safe
   cleanOverlays: true,
   run: function() {
     try {

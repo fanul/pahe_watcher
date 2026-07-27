@@ -303,17 +303,13 @@ export function getInjectedAutomationScript(config = {}) {
         window.setTimeout = (cb, d, ...a) => {
           let divisor = 1;
           const excluded = userExclusions.some(s => site.includes(s));
-          if (activeSpeedUp && !excluded) {
+          const stack = new Error().stack || '';
+          const isVerificationCaller = stack.includes('hcaptcha') || 
+                                       stack.includes('recaptcha') || 
+                                       stack.includes('turnstile') || 
+                                       stack.includes('cloudflare');
+          if ((activeSpeedUp && !excluded && !isVerificationCaller) || (isPaheDomain && speedUpPaheSetting && !isVerificationCaller)) {
             divisor = 50;
-          } else if (isPaheDomain && speedUpPaheSetting) {
-            const stack = new Error().stack || '';
-            const isVerificationCaller = stack.includes('hcaptcha') || 
-                                         stack.includes('recaptcha') || 
-                                         stack.includes('turnstile') || 
-                                         stack.includes('cloudflare');
-            if (!isVerificationCaller) {
-              divisor = 50;
-            }
           }
 
           if (divisor > 1) {
@@ -334,17 +330,13 @@ export function getInjectedAutomationScript(config = {}) {
         window.setInterval = (cb, d, ...a) => {
           let divisor = 1;
           const excluded = userExclusions.some(s => site.includes(s));
-          if (activeSpeedUp && !excluded) {
+          const stack = new Error().stack || '';
+          const isVerificationCaller = stack.includes('hcaptcha') || 
+                                       stack.includes('recaptcha') || 
+                                       stack.includes('turnstile') || 
+                                       stack.includes('cloudflare');
+          if ((activeSpeedUp && !excluded && !isVerificationCaller) || (isPaheDomain && speedUpPaheSetting && !isVerificationCaller)) {
             divisor = 50;
-          } else if (isPaheDomain && speedUpPaheSetting) {
-            const stack = new Error().stack || '';
-            const isVerificationCaller = stack.includes('hcaptcha') || 
-                                         stack.includes('recaptcha') || 
-                                         stack.includes('turnstile') || 
-                                         stack.includes('cloudflare');
-            if (!isVerificationCaller) {
-              divisor = 50;
-            }
           }
 
           if (divisor > 1) {

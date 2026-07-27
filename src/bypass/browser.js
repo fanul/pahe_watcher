@@ -126,7 +126,7 @@ export class BrowserManager {
     await this.context.addInitScript((d) => { window.__paheDelayMs = d; }, this.initialPageDelayMs);
 
     const exclusions = this.config?.bypass?.speedUpExclusions ||
-      ['oii.la', 'linegee.net', 'tpi.li', 'pahe.plus', 'ouo.io', 'ouo.press', 'autoshieldd.com'];
+      ['linegee.net', 'pahe.plus', 'ouo.io', 'ouo.press'];
     await this.context.addInitScript((ex) => { window.__paheSpeedUpExclusions = ex; }, exclusions);
 
     // ── manual stealth init scripts: ONLY on the stock-playwright path ──
