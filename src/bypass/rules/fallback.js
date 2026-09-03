@@ -107,7 +107,7 @@
       // adblock host-lists — see ADBLOCK_GATE_HOSTS in userscript.js).
       if (/blogmystt\.com/.test(o) || adblockGateHosts.some((h) => o.includes(h))) {
         try {
-          const first = document.querySelector('a#startButton');
+          const first = document.querySelector('a#startButton, .myButton:not(.saynotoads)');
           const second = document.querySelector('button#getnewlink');
           if (first && window.__c1 !== true) { window.__c1 = true; first.click(); }
           if (second && window.__c2 !== true) { window.__c2 = true; second.click(); }

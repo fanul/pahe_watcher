@@ -44,6 +44,14 @@
         return;
       }
 
+      // Step 1: Click invisibleCaptchaShortlink if present
+      const captchaBtn = document.querySelector('#invisibleCaptchaShortlink:not([disabled])');
+      if (captchaBtn && !window.__paheCaptchaDone) {
+        window.__paheCaptchaDone = true;
+        console.log('[pahe-auto] [pahe.plus] Clicking #invisibleCaptchaShortlink...');
+        setTimeout(() => { captchaBtn.click(); }, 1500);
+      }
+
       // Fallback: Find the get-link anchor (if already generated or direct)
       const getLinkBtn = document.querySelector('a.get-link, a.btn-success, .get-link a');
       if (getLinkBtn) {
