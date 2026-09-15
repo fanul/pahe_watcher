@@ -18,6 +18,11 @@ import {
   handleSheetsKeyFile
 } from './config/sheets.js';
 import {
+  getPublicJdownloaderConfig,
+  applyJdownloaderOverrides,
+  mergeJdownloaderOverrides
+} from './config/jdownloader.js';
+import {
   getPublicSyncConfig,
   applySyncOverrides,
   mergeSyncOverrides
@@ -30,17 +35,18 @@ import {
 
 const log = createLogger('app:config');
 
-export function getPublicConfig(runtime, sheets) {
+export function getPublicConfig(runtime, sheets, jdownloader) {
   return {
     watcher: getPublicWatcherConfig(runtime),
     bypass: getPublicBypassConfig(runtime),
     sheets: getPublicSheetsConfig(runtime, sheets),
+    jdownloader: getPublicJdownloaderConfig(runtime, jdownloader),
     sync: getPublicSyncConfig(runtime),
     deadLinkReport: getPublicDeadLinkReportConfig(runtime),
   };
 }
 
-export async function updateConfig(runtime, store, sheets, bypass, watcher, patch) {
+export async function updateConfig(runtime, store, sheets, bypass, watcher, patch, jdownloader) {
   // Handle Sheets Key file creation/removal
   handleSheetsKeyFile(runtime, patch, log);
 
@@ -60,6 +66,15 @@ export async function updateConfig(runtime, store, sheets, bypass, watcher, patc
     }
     sheets.sheets = null;
     sheets._headerEnsured = false;
+  }
+
+  // Reload JDownloader client credentials — force a fresh connect() next use
+  if (patch?.jdownloader && jdownloader) {
+    jdownloader.email = runtime.jdownloader.email;
+    jdownloader.password = runtime.jdownloader.password;
+    jdownloader.deviceName = runtime.jdownloader.deviceName;
+    jdownloader.autostart = runtime.jdownloader.autostart;
+    await jdownloader.close().catch(() => {});
   }
 
   // Restart Browser if bypass settings changed
@@ -99,13 +114,14 @@ export async function updateConfig(runtime, store, sheets, bypass, watcher, patc
   }
 
   log.info('Runtime config updated', patch);
-  return getPublicConfig(runtime, sheets);
+  return getPublicConfig(runtime, sheets, jdownloader);
 }
 
 export function applyOverrides(runtime, patch) {
   applyWatcherOverrides(runtime, patch);
   applyBypassOverrides(runtime, patch);
   applySheetsOverrides(runtime, patch);
+  applyJdownloaderOverrides(runtime, patch);
   applySyncOverrides(runtime, patch);
   applyDeadLinkReportOverrides(runtime, patch);
   return runtime;
@@ -116,6 +132,7 @@ export function mergeOverrides(existing, patch) {
     watcher: mergeWatcherOverrides(existing, patch),
     bypass: mergeBypassOverrides(existing, patch),
     sheets: mergeSheetsOverrides(existing, patch),
+    jdownloader: mergeJdownloaderOverrides(existing, patch),
     sync: mergeSyncOverrides(existing, patch),
     deadLinkReport: mergeDeadLinkReportOverrides(existing, patch),
   };

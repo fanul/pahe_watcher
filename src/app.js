@@ -4,6 +4,7 @@ import { Store } from './core/store.js';
 import { Watcher } from './watcher/watcher.js';
 import { JobQueue } from './queue/jobQueue.js';
 import { SheetsClient } from './sheets/sheetsClient.js';
+import { JDownloaderClient } from './jdownloader/jdownloaderClient.js';
 import { BypassEngine } from './bypass/index.js';
 import { bus } from './core/eventBus.js';
 import {
@@ -34,6 +35,13 @@ export async function createApp() {
     keyFile: runtime.sheets.serviceAccountKey,
     sheetId: runtime.sheets.sheetId,
     tab: runtime.sheets.tab,
+  });
+
+  const jdownloader = new JDownloaderClient({
+    email: runtime.jdownloader.email,
+    password: runtime.jdownloader.password,
+    deviceName: runtime.jdownloader.deviceName,
+    autostart: runtime.jdownloader.autostart,
   });
 
   const queue = new JobQueue({
@@ -81,6 +89,28 @@ export async function createApp() {
     } else {
       ctx.log?.('Sheets not configured — resolved link stored in job result only.');
     }
+
+    // Push to JDownloader last, and deliberately non-fatal: the link is
+    // already resolved and saved above (and logged to the sheet, if
+    // configured) by this point — a JDownloader hiccup (device offline,
+    // bad credentials) shouldn't fail the whole job and force a costly
+    // re-run of the entire ad-chain just to retry this convenience step.
+    // Recorded on the row (null = not configured, true/false = attempted)
+    // so the GUI can show a push-status badge next to the job's own status.
+    row.jdownloaderPushed = null;
+    if (jdownloader.enabled) {
+      try {
+        await jdownloader.addLink(row.finalUrl, { packageName: job.title });
+        row.jdownloaderPushed = true;
+        ctx.log?.('Pushed to JDownloader.');
+      } catch (err) {
+        row.jdownloaderPushed = false;
+        row.jdownloaderError = err.message;
+        ctx.log?.(`JDownloader push failed: ${err.message}`);
+        log.error('JDownloader push failed', { error: String(err) });
+      }
+    }
+
     return row;
   });
 
@@ -88,22 +118,24 @@ export async function createApp() {
     runtime,
     store,
     sheets,
+    jdownloader,
     queue,
     bypass,
     watcher,
 
     getPublicConfig() {
-      return getPublicConfig(runtime, sheets);
+      return getPublicConfig(runtime, sheets, jdownloader);
     },
 
     async updateConfig(patch) {
-      return await updateConfig(runtime, store, sheets, bypass, watcher, patch);
+      return await updateConfig(runtime, store, sheets, bypass, watcher, patch, jdownloader);
     },
 
     async shutdown() {
       log.info('Shutting down…');
       watcher.stop();
       await bypass.close().catch(() => {});
+      await jdownloader.close().catch(() => {});
       store.flushNow();
       store.close();
     },

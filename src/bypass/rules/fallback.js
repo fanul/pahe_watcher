@@ -107,7 +107,30 @@
       // adblock host-lists — see ADBLOCK_GATE_HOSTS in userscript.js).
       if (/blogmystt\.com/.test(o) || adblockGateHosts.some((h) => o.includes(h))) {
         try {
-          const first = document.querySelector('a#startButton, .myButton:not(.saynotoads)');
+          // The "myButton" ad-gate template (Click To Verify -> Continue ->
+          // Get Link) replaces the DOM with a NEW .myButton element (random
+          // class suffix) at each stage. A one-shot page-global flag only
+          // ever clicks the first one it sees, so mark each button element
+          // individually instead — otherwise the flow stalls after stage 1
+          // and needs a manual click for "Continue".
+          //
+          // intercelestial.com/teknoasian.com are skipped here entirely:
+          // that variant of the template checks event.isTrusted, and a
+          // script-dispatched click here can never satisfy that — confirmed
+          // live to trigger the "auto-click script detected" wall even when
+          // it's the only synthetic click in an otherwise-real-clicked
+          // sequence. bypass/index.js drives those two with real Playwright
+          // clicks instead (see the LL ad-gate handling there); clicking
+          // here too would race it and double-submit.
+          if (!/intercelestial\.com|teknoasian\.com/.test(o)) {
+            document.querySelectorAll('.myButton:not(.saynotoads)').forEach((btn) => {
+              if (btn.dataset.paheClicked) return;
+              btn.dataset.paheClicked = '1';
+              console.log('[pahe-auto] Clicking .myButton: ' + btn.textContent.trim());
+              btn.click();
+            });
+          }
+          const first = document.querySelector('a#startButton');
           const second = document.querySelector('button#getnewlink');
           if (first && window.__c1 !== true) { window.__c1 = true; first.click(); }
           if (second && window.__c2 !== true) { window.__c2 = true; second.click(); }

@@ -93,12 +93,26 @@ export function renderJobs(state) {
       errorSpan = ` · <span style="color:${errorColor}">${errorLabel}</span>`;
     }
 
+    // Sits just left of the status pill — j.result.jdownloaderPushed is
+    // null when JDownloader isn't configured (or this job never reached
+    // that step), so the badge only shows up once a push was actually
+    // attempted.
+    let jdownloaderBadge = '';
+    if (j.result?.jdownloaderPushed === true) {
+      jdownloaderBadge = `<span class="job-status" style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399;" title="Pushed to JDownloader">⬇ JDownloader</span>`;
+    } else if (j.result?.jdownloaderPushed === false) {
+      jdownloaderBadge = `<span class="job-status" style="background: rgba(248, 81, 73, 0.15); border: 1px solid rgba(248, 81, 73, 0.4); color: var(--red);" title="${esc(j.result?.jdownloaderError || 'JDownloader push failed')}">⬇ JDownloader failed</span>`;
+    }
+
     return `<div class="${cardClass}">
       <div style="display:flex; flex-direction:column; flex:1; min-width:0">
         <div class="job-title">${esc(j.title || 'job')}</div>
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px">
           <div class="meta" style="margin-bottom:0">${j.provider || ''} ${j.quality || ''} · attempt ${j.attempts || 0}${errorSpan}</div>
-          <span class="job-status ${j.status}">${esc(statusText)}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            ${jdownloaderBadge}
+            <span class="job-status ${j.status}">${esc(statusText)}</span>
+          </div>
         </div>
         ${final}
         ${logs ? `<div class="joblog">${esc(logs)}</div>` : ''}

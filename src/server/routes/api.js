@@ -30,7 +30,7 @@ function renderReportTemplate(template, { post, option }) {
  */
 export function createApiRouter(app) {
   const router = express.Router();
-  const { store, watcher, queue, bypass, sheets, runtime } = app;
+  const { store, watcher, queue, bypass, sheets, jdownloader, runtime } = app;
 
   // ── status ──
   router.get('/status', async (req, res) => {
@@ -362,6 +362,29 @@ export function createApiRouter(app) {
   // ── sheets ──
   router.get('/sheets/test', async (req, res) => {
     res.json(await sheets.testConnection());
+  });
+
+  // ── jdownloader ──
+  router.get('/jdownloader/test', async (req, res) => {
+    res.json(await jdownloader.testConnection());
+  });
+
+  // ── browser (manual login helper) ──
+  // Opens a real login page in the same persistent browser profile every
+  // job runs through, so the operator can sign in by hand once instead of
+  // exporting/pasting cookies — which for Google specifically is unreliable
+  // cross-machine (see BypassEngine.openLoginPage's comment for why).
+  router.post('/browser/open-login', async (req, res) => {
+    const { url } = req.body || {};
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ ok: false, error: 'Missing url' });
+    }
+    try {
+      const result = await bypass.openLoginPage(url);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
+    }
   });
 
   // ── backup (export/import full config + database as a zip) ──

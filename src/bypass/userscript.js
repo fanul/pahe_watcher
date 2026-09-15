@@ -119,6 +119,12 @@ export function getInjectedAutomationScript(config = {}) {
     if (window.__paheAuto) return;
     window.__paheAuto = true;
 
+    // Captured before the timer-speedup override (below) can touch
+    // window.setInterval, so the click-decoy stripper always runs at a true
+    // 100ms cadence regardless of a domain's speedup setting — it has to
+    // outrun the page's own re-insertion interval, not the reverse.
+    const rawSetInterval = window.setInterval.bind(window);
+
     const site = window.location.hostname.replace(/^www\\./, '');
 
     // ── Dedicated Flying/Floating Ads Cleaner for ouo.io ──
@@ -220,6 +226,35 @@ export function getInjectedAutomationScript(config = {}) {
       try {
         document.querySelectorAll('*[onclick*="window.open"]').forEach((n) => n.removeAttribute('onclick'));
         document.querySelectorAll('*[href*="https:///"]').forEach((n) => n.removeAttribute('href'));
+      } catch {}
+    }
+
+    // Ad-network "click decoy": a div, position:fixed, absurdly high z-index
+    // (2147483647 = INT32_MAX — real UI essentially never hardcodes the
+    // literal 32-bit signed max), sized and positioned to sit exactly on top
+    // of a real interactive element (a button, or a 3rd-party captcha
+    // checkbox iframe) so clicks land on the decoy instead — for ad revenue
+    // and/or to make the real element look "unclickable". Confirmed live on
+    // intercelestial.com (over the "Continue" button) and pahe.plus (over
+    // the hCaptcha checkbox iframe). Re-inserted on an interval by the
+    // page's own script (sometimes with a randomized data-* attribute or
+    // placeholder content to dodge an "empty div" filter — seen live), so
+    // this only keys on position+z-index, not emptiness, and instead
+    // excludes anything that could plausibly be real UI: containing an
+    // iframe (the decoy sits ON TOP of the real iframe, never wraps it) or
+    // mentioning captcha/turnstile in its own attributes.
+    function removeClickDecoyOverlays() {
+      try {
+        document.querySelectorAll('div').forEach((el) => {
+          try {
+            const style = window.getComputedStyle(el);
+            if (style.position !== 'fixed' || parseInt(style.zIndex, 10) <= 2000000000) return;
+            if (el.querySelector('iframe')) return;
+            const attrStr = ((el.className || '') + ' ' + (el.id || '')).toLowerCase();
+            if (attrStr.includes('captcha') || attrStr.includes('turnstile')) return;
+            el.remove();
+          } catch {}
+        });
       } catch {}
     }
 
@@ -361,6 +396,9 @@ export function getInjectedAutomationScript(config = {}) {
         console.error('[pahe-auto] Failed to install speedup: ' + err.message);
       }
     }
+
+    try { rawSetInterval(removeClickDecoyOverlays, 100); } catch {}
+    removeClickDecoyOverlays();
 
     const tick = () => {
       if (activeRule.cleanOverlays) removeAdOverlays();

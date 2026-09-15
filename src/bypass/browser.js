@@ -10,11 +10,19 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
  * Manages a single persistent Chromium context.
  *
  * Engine:
- *   - "patchright" (default): an undetected Playwright fork that closes the
- *     `Runtime.enable` CDP leak Cloudflare uses to fingerprint Playwright. This
- *     is what lets ouo.io's Turnstile auto-issue a token (or stay solvable).
- *     Pairs with a real Chrome install via `channel: "chrome"`.
- *   - "playwright": stock Playwright + manual stealth init scripts (fallback).
+ *   - "playwright" (default): stock Playwright + manual stealth init scripts.
+ *   - "patchright": an undetected Playwright fork that closes the
+ *     `Runtime.enable` CDP leak Cloudflare uses to fingerprint Playwright —
+ *     this is what lets ouo.io's Turnstile auto-issue a token (or stay
+ *     solvable). Pairs with a real Chrome install via `channel: "chrome"`.
+ *     NOT the default despite that: as of patchright 1.57.0–1.61.1, its
+ *     `addInitScript` silently no-ops (confirmed live — a variable set from
+ *     it is never visible to page.evaluate; upstream tracked as
+ *     patchright-nodejs#55), which means the ENTIRE userscript.js automation
+ *     layer (every DOMAIN_RULES click-through rule, not just one site) never
+ *     actually runs under it. Stock Playwright doesn't have this bug. Set
+ *     BYPASS_STEALTH_ENGINE=patchright to opt back in for Turnstile-heavy
+ *     use, at the cost of every other site's automation being silently dead.
  *
  * Persisting the profile keeps GDFlix login/cookies AND warms the Cloudflare
  * fingerprint between jobs, which materially raises the Turnstile pass rate.
@@ -31,7 +39,7 @@ export class BrowserManager {
 
   async _loadEngine() {
     if (this._engine) return this._engine;
-    const want = this.config?.bypass?.stealth?.engine || 'patchright';
+    const want = this.config?.bypass?.stealth?.engine || 'playwright';
     if (want === 'patchright') {
       try {
         const pw = await import('patchright');
@@ -79,6 +87,13 @@ export class BrowserManager {
       const launchOptions = {
         headless: this.headless,
         viewport: { width: 1366, height: 768 },
+        // Confirmed live: launchPersistentContext without an explicit
+        // locale sends NO Accept-Language header at all (verified against
+        // multiple domains) — every real browser always sends one. A
+        // totally absent Accept-Language is a concrete, checkable
+        // automation tell that has nothing to do with click behavior or
+        // TLS; this is the fix for it, not a stealth flag.
+        locale: 'en-US',
       };
       if (channel) launchOptions.channel = channel;
 
@@ -94,6 +109,14 @@ export class BrowserManager {
           args.push('--disable-blink-features=AutomationControlled');
         }
         if (stealth.useNoSandbox !== false) args.push('--no-sandbox');
+        // Headful automation otherwise pops a visible Chrome window and
+        // steals focus for every fully-automated stretch (GDFlix resolving,
+        // clicking through ad chains, etc.) where nobody needs to look at
+        // it. Starts minimized instead; the one place a human actually
+        // needs it — manual captcha solving — calls page.bringToFront()
+        // (see captcha/manual.js) to bring it back up at exactly that
+        // moment.
+        if (!this.headless && stealth.startMinimized !== false) args.push('--start-minimized');
         if (ignoreDefaultArgs.length) launchOptions.ignoreDefaultArgs = ignoreDefaultArgs;
         launchOptions.args = args;
       } else {

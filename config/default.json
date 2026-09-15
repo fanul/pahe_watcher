@@ -31,7 +31,7 @@
     "speedUpPahe": true,
     "removeOuoAds": true,
     "stealth": {
-      "engine": "patchright",
+      "engine": "playwright",
       "chromeChannel": "chrome",
       "disableAutomationFlag": true,
       "useStealthUserAgent": true,
@@ -61,6 +61,12 @@
     "serviceAccountKey": "./credentials/google-service-account.json",
     "sheetId": "",
     "tab": "Downloads"
+  },
+  "jdownloader": {
+    "email": "",
+    "password": "",
+    "deviceName": "",
+    "autostart": true
   },
   "sync": {
     "backfillBatchSize": 5,

@@ -67,16 +67,38 @@ export function isGdflixUrl(url) {
   }
 }
 
+/**
+ * Hostname only — never the raw URL string. Confirmed live: a Google
+ * sign-in wall URL looks like
+ *   accounts.google.com/v3/signin/identifier?continue=https://drive.google.com/open?id=X
+ * which contains "drive.google.com" as a query-string substring despite the
+ * host being accounts.google.com, a page that still requires an actual
+ * login. Testing the raw URL string (as this used to) classified that wall
+ * itself as an already-resolved 'google-drive' link the moment cookie login
+ * failed to authenticate — the job then reported success with a dead
+ * sign-in-wall URL as its "final" link, and because the job looked done its
+ * checkpoint got cleared, so the next retry had nothing to resume from and
+ * restarted the entire ad-chain from scratch instead of just retrying auth.
+ */
+function hostnameOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
 export function classifyFinalLink(url) {
-  if (/drive\.google\.com|googleusercontent|usercontent\.google/.test(url)) return 'google-drive';
-  if (/pixeldrain|pixeldra\.in/.test(url)) return 'pixeldrain';
+  const hostname = hostnameOf(url);
+  if (/drive\.google\.com|googleusercontent|usercontent\.google/.test(hostname)) return 'google-drive';
+  if (/pixeldrain|pixeldra\.in/.test(hostname)) return 'pixeldrain';
   // `workers.dev`/`.r2.` here is a catch-all for hosts we haven't taught
   // resolveGdflix to follow through yet (see MULTIUP_VALIDATE_HOST_RE below
   // for the one we do). Confirmed live: validate.multiup*.workers.dev is a
   // Cloudflare-Worker front for multiup.io — it redirects to a real
   // multi-mirror page (gofile.io/1fichier.com/megaup.net, no Google Drive
   // involved at all), not a Google Drive link as it might look at a glance.
-  if (/workers\.dev|\.r2\./.test(url)) return 'worker-proxy';
+  if (/workers\.dev|\.r2\./.test(hostname)) return 'worker-proxy';
   return 'direct';
 }
 
@@ -491,7 +513,12 @@ async function clickAndAwaitLink(page, btn, label, ctx, hostReSource = FINAL_HOS
     const pages = page.context().pages();
     for (const p of pages) {
       const u = p.url();
-      if (hostRe.test(u)) {
+      // Hostname only, not the raw URL — see classifyFinalLink's comment:
+      // a Google sign-in wall's ?continue=https://drive.google.com/... query
+      // string would otherwise satisfy this on the wall's own accounts.
+      // google.com address, treating an unauthenticated sign-in page as an
+      // already-resolved Drive link.
+      if (hostRe.test(hostnameOf(u))) {
         ctx.log?.(`[GDFlix] Found final URL in browser address bar: ${u}`);
         if (p !== page) await p.close().catch(() => {});
         return await finalizeLink(page, u, ctx);

@@ -1,7 +1,45 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createLogger } from '../../core/logger.js';
 import { extractCookieSourceDomains, parseCookieString, baseDomainOf } from '../cookieUtils.js';
 
 const log = createLogger('resolver:google');
+
+/**
+ * Which configured cookie string we last actually applied, keyed by browser
+ * profile — persisted as a small file next to the profile (so it survives
+ * process restarts, and resets naturally if the profile itself is ever
+ * wiped). Lets ensureGoogleLogin skip the clear+reinject+reload round trip
+ * on every single job once the configured account is already active,
+ * instead of paying that cost on every job that lands on a Drive page.
+ */
+function fingerprintStatePath(profileDir) {
+  return path.join(profileDir, '.google-auth-fingerprint.json');
+}
+
+function cookieFingerprint(cookies) {
+  return crypto.createHash('sha256').update(cookies).digest('hex').slice(0, 16);
+}
+
+function readAppliedFingerprint(profileDir) {
+  if (!profileDir) return null;
+  try {
+    return JSON.parse(fs.readFileSync(fingerprintStatePath(profileDir), 'utf8')).fingerprint || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeAppliedFingerprint(profileDir, fingerprint) {
+  if (!profileDir) return;
+  try {
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.writeFileSync(fingerprintStatePath(profileDir), JSON.stringify({ fingerprint, updatedAt: new Date().toISOString() }));
+  } catch (err) {
+    log.warn('Failed to persist Google cookie fingerprint', { error: String(err) });
+  }
+}
 
 /**
  * Google Drive cookie-based auth. Many "anyone with the link" Drive files need
@@ -94,22 +132,46 @@ async function getGoogleLoginStatus(page) {
 
 /**
  * Ensure the browser has a signed-in Google session (if cookies are configured
- * and a sign-in wall is actually present). No-ops quickly for public files.
+ * and a sign-in wall is actually present). No-ops quickly for public files,
+ * and also no-ops once the configured cookies are already the ones active
+ * for this profile (tracked via a persisted fingerprint) — so a normal job
+ * queue doesn't pay a clear+reinject+reload on every single Drive hit.
  * @returns {Promise<{loggedIn: boolean, method?: string, skipped?: boolean}>}
  */
 export async function ensureGoogleLogin(page, credentials, ctx = {}) {
-  const { cookies } = credentials || {};
+  const { cookies, profileDir } = credentials || {};
 
   const initialStatus = await getGoogleLoginStatus(page);
-  if (initialStatus === 'ok') {
-    return { loggedIn: true, method: 'public-or-session' };
-  }
-
-  ctx.log?.(`[Google] Sign-in wall detected ("${initialStatus}").`);
 
   if (!cookies) {
-    ctx.log?.('[Google] No Google account cookies configured — leaving as-is (set them in Settings → Google Drive if this file needs an account).');
+    if (initialStatus === 'ok') return { loggedIn: true, method: 'public-or-session' };
+    ctx.log?.(`[Google] Sign-in wall detected ("${initialStatus}"). No Google account cookies configured — leaving as-is (set them in Settings → Google Drive if this file needs an account).`);
     return { loggedIn: false, skipped: true };
+  }
+
+  // NOTE: initialStatus === 'ok' does NOT distinguish "this is a public file,
+  // no login needed" from "the persistent browser profile already has a
+  // signed-in session for the WRONG Google account" — Google reports the
+  // page as logged-in either way. Confirmed live: the profile can carry a
+  // long-lived session (SID/HSID/SAPISID cookies valid ~a year out) for an
+  // account the user never configured here, left over from earlier use —
+  // and since that reads as "ok", cookies configured in Settings never even
+  // got checked, let alone injected. So whenever cookies are configured, we
+  // compare against the fingerprint of what we last actually applied for
+  // THIS profile: if it matches and the session still reads "ok", trust it
+  // and skip (cheap, the common case); if it differs — first run, cookies
+  // were changed in Settings, or the profile was reset — reassert the
+  // configured account regardless of what Google currently reports.
+  const fingerprint = cookieFingerprint(cookies);
+  const cookiesUnchanged = profileDir && fingerprint === readAppliedFingerprint(profileDir);
+
+  if (initialStatus === 'ok' && cookiesUnchanged) {
+    return { loggedIn: true, method: 'public-or-session' };
+  }
+  if (initialStatus === 'ok') {
+    ctx.log?.('[Google] Already signed in, but configured cookies are new/changed for this profile — re-asserting the configured account.');
+  } else {
+    ctx.log?.(`[Google] Sign-in wall detected ("${initialStatus}").`);
   }
 
   try {
@@ -128,6 +190,13 @@ export async function ensureGoogleLogin(page, credentials, ctx = {}) {
       return { loggedIn: false };
     }
 
+    // Clear any existing google.com session first — otherwise the newly
+    // injected cookies just sit alongside the old ones and Google's own
+    // multi-login logic can keep treating the stale account as active.
+    // mirrorDomain already carries the leading dot (e.g. ".google.com").
+    await page.context().clearCookies({ domain: mirrorDomain }).catch(() => {});
+    await page.context().clearCookies({ domain: mirrorDomain.replace(/^\./, '') }).catch(() => {});
+
     ctx.log?.(`[Google] Injecting ${parsed.length} cookie(s) scoped to ${mirrorDomain}...`);
     await page.context().addCookies(parsed);
     await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -137,6 +206,7 @@ export async function ensureGoogleLogin(page, credentials, ctx = {}) {
 
     if (postStatus === 'ok') {
       ctx.log?.('[Google] Authenticated successfully using cookies.');
+      writeAppliedFingerprint(profileDir, fingerprint);
       return { loggedIn: true, method: 'cookies' };
     }
 

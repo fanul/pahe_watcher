@@ -1,14 +1,38 @@
 import { createLogger } from '../core/logger.js';
 import { BrowserManager } from './browser.js';
-import { createCaptchaSolver, detectCaptcha } from './captcha/index.js';
+import { createCaptchaSolver, detectCaptcha, tryAutoClickRecaptchaCheckbox } from './captcha/index.js';
 import { isGdflixUrl, resolveGdflix, classifyFinalLink } from './resolvers/gdflix.js';
 import { isGoogleAuthHost, ensureGoogleLogin, normalizeGoogleDriveLink } from './resolvers/googleDrive.js';
 import { isDeadLinkPage } from './deadLinkPatterns.js';
+import { isAntiAutomationWallPage } from './antiAutomationWall.js';
+import { resolveLLAdGate, isLLAdGateUrl } from './resolvers/llAdGate.js';
 import { AD_HOSTS } from './userscript.js';
+import { restoreWindow } from './windowControl.js';
 
 const log = createLogger('bypass');
 
 const FINAL_HOST_RE = /(drive\.google\.com|googleusercontent\.com|pixeldrain\.|pixeldra\.in|workers\.dev|\.r2\.)/i;
+
+/**
+ * Hostname only, never the raw URL string. Confirmed live: a Google sign-in
+ * wall (accounts.google.com/v3/signin/...?continue=https://drive.google.com/...)
+ * contains "drive.google.com" as a query-string substring despite the host
+ * itself requiring a login FINAL_HOST_RE.test(url) can't tell apart from an
+ * actual resolved Drive link. That false match made two real jobs report
+ * "done" with a dead sign-in-wall URL as their finalUrl the moment cookie
+ * login failed — and because the job looked complete, its checkpoint got
+ * cleared, so the next retry had nothing to resume from and reran the whole
+ * ad-chain (intercelestial → pahe.plus → ouo → gdflix) from scratch instead
+ * of just retrying the Google auth step. See resolvers/gdflix.js's
+ * classifyFinalLink for the same fix applied there.
+ */
+function hostnameOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
 
 // Some shorteners' page automation replicates a click handler's navigation
 // logic (e.g. reading an atob()-encoded query string off a script tag)
@@ -76,6 +100,38 @@ export class BypassEngine {
 
   async close() {
     await this.browser.close();
+  }
+
+  /**
+   * Opens a fresh tab in the SAME persistent browser profile every job
+   * already runs through, and brings it to front so a human can sign in by
+   * hand. The session then lives directly in that profile afterward —
+   * ensureGoogleLogin/ensureGdflixLogin's own "already logged in" fast path
+   * (see resolvers/googleDrive.js, resolvers/gdflix.js) picks it up
+   * automatically on the next job, no cookie export/import needed.
+   *
+   * This exists because copy-pasted cookies turned out to be fundamentally
+   * unreliable for Google specifically: confirmed live that a freshly
+   * exported, unexpired cookie set (SID/HSID/SAPISID/etc.) still failed to
+   * authenticate when replayed from this machine, landing on a bare "Sign
+   * in" page that didn't even recognize a prior session. Google's SIDCC /
+   * __Secure-1PSIDCC family of cookies bind a session to the network it was
+   * issued from as anti-session-theft protection — so a cookie transplant
+   * from a different machine/IP gets silently rejected regardless of how
+   * fresh the cookies are. Logging in directly in this profile sidesteps
+   * that entirely, since the session is then native to this machine.
+   */
+  async openLoginPage(url) {
+    if (this.browser.headless) {
+      throw new Error('Browser is running headless — switch Browser Mode to "headful" in Settings, then try again.');
+    }
+    const page = await this.browser.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch((err) => {
+      log.warn(`openLoginPage navigation error: ${err.message}`);
+    });
+    await restoreWindow(page);
+    await page.bringToFront().catch(() => {});
+    return { url: page.url() };
   }
 
   async abort(jobId) {
@@ -157,8 +213,15 @@ export class BypassEngine {
     context.on('page', onPage);
 
     try {
-      ctx.log?.(`Starting: ${job.provider} ${job.quality || ''} — ${shorten(job.url)}`);
-      await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+      // Resume from the last known-good hop if a previous attempt on this
+      // same job got that far (see jobQueue.js's setCheckpoint) — skips
+      // re-walking the whole chain, including intercelestial.com's flaky
+      // ad-gate, on every retry. Falls back to job.url if there's no
+      // checkpoint (first attempt) or the queue already cleared a stale one
+      // after a failed resume.
+      const startUrl = job.checkpointUrl || job.url;
+      ctx.log?.(`Starting: ${job.provider} ${job.quality || ''} — ${shorten(startUrl)}${job.checkpointUrl ? ' (resumed from checkpoint)' : ''}`);
+      await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
 
       settled = await this._driveToFinal(activePages, ctx, timeoutMs, () => stuckLoopError);
       if (!settled) throw new Error('Timed out before reaching a final link');
@@ -183,7 +246,7 @@ export class BypassEngine {
       for (const p of activePages) {
         const listener = navListeners.get(p);
         if (listener) p.off('framenavigated', listener);
-        await p.close().catch(() => {});
+        await closeWithTimeout(p);
       }
     }
   }
@@ -192,10 +255,39 @@ export class BypassEngine {
    * Poll all active pages/tabs in the context until one reaches GDFlix or a final host directly.
    */
   async _driveToFinal(activePages, ctx, timeoutMs, getStuckLoopError) {
-    const deadline = Date.now() + timeoutMs;
+    let deadline = Date.now() + timeoutMs;
     let handledGdflix = false;
     let handledGoogleAuth = false;
+    let handledLLGate = false;
     const deadCheckedUrls = new Set();
+    let lastCheckpointedUrl = null;
+    // Stable, resumable hops worth checkpointing (see setCheckpoint in
+    // jobQueue.js) — deliberately NOT every hop: the ad-chain redirect noise
+    // in between (random ad-popup domains, one-shot signed shortener
+    // tokens) isn't something a later retry could usefully resume from, but
+    // landing on pahe.plus or ouo.io is a real, stable waypoint.
+    const CHECKPOINT_HOSTS = ['pahe.plus', 'old.pahe.plus', 'ouo.io', 'ouo.press'];
+    const maybeCheckpoint = (url) => {
+      if (!url || url === lastCheckpointedUrl || !ctx.setCheckpoint) return;
+      try {
+        const parsed = new URL(url);
+        // A bare domain root is never a valid resume point for these hosts
+        // — pahe.plus/ouo.io/ouo.press links always carry a short-link slug
+        // in the path. Confirmed live: a chain that got knocked off its
+        // specific link (a Cloudflare challenge + decoy-article redirect
+        // detour) can land back on just "https://ouo.press/", and without
+        // this guard that overwrites the last GOOD checkpoint (the actual
+        // /3SB2v1C link) with a useless one a future retry can't resume
+        // from at all.
+        if (parsed.pathname === '/' || parsed.pathname === '') return;
+        const host = parsed.hostname.replace(/^www\./, '');
+        const isCheckpointHost = CHECKPOINT_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+        if (isCheckpointHost || isGdflixUrl(url)) {
+          lastCheckpointedUrl = url;
+          ctx.setCheckpoint(url);
+        }
+      } catch {}
+    };
 
     // Reuses AD_HOSTS (the full ad-chain host list the page automation
     // already knows how to click through) plus the non-shortener hosts a
@@ -221,10 +313,12 @@ export class BypassEngine {
       for (const p of pages) {
         const url = p.url();
 
+        if (p === pages[0]) maybeCheckpoint(url);
+
         // 1. Close failed/error tabs immediately
         if (url.includes('chrome-error://') || url.includes('chromewebdata')) {
           ctx.log?.(`[tab] Closing failed/error tab`);
-          await p.close().catch(() => {});
+          await closeWithTimeout(p);
           continue;
         }
 
@@ -232,7 +326,7 @@ export class BypassEngine {
         const isInitialTabCheck = (p === pages[0] && pages.length === 1);
         if (!isInitialTabCheck && url && (url.includes('google.com/search') || url.includes('olxtoto'))) {
           ctx.log?.(`[tab] Closing ad redirect/spam popup: ${shorten(url)}`);
-          await p.close().catch(() => {});
+          await closeWithTimeout(p);
           continue;
         }
 
@@ -243,7 +337,7 @@ export class BypassEngine {
             const isWhitelisted = WHITELIST_DOMAINS.some(d => url.toLowerCase().includes(d));
             if (!isWhitelisted) {
               ctx.log?.(`[tab] Closing unwanted ad popup tab: ${shorten(url)}`);
-              await p.close().catch(() => {});
+              await closeWithTimeout(p);
               continue;
             }
           }
@@ -253,11 +347,32 @@ export class BypassEngine {
         // don't re-evaluate the same static page every polling tick. Applies
         // at any hop (shortener, GDFlix, or the final Drive/pixeldrain page
         // itself), since "file removed" pages can appear anywhere in the chain.
-        if (url && url !== 'about:blank' && !deadCheckedUrls.has(url)) {
-          deadCheckedUrls.add(url);
-          const pageText = await p.evaluate(() => document.body?.innerText || '').catch(() => '');
-          if (isDeadLinkPage(pageText)) {
-            throw Object.assign(new Error(`Dead link detected at ${shorten(url)}`), { dead: true });
+        //
+        // The anti-automation wall check below is deliberately NOT gated by
+        // deadCheckedUrls the same way — confirmed live that intercelestial.com
+        // is a single-page app that shows the wall at the SAME url
+        // (https://intercelestial.com/) it was already sitting at before the
+        // wall appeared (no navigation). Gating on "have we checked this URL
+        // before" meant the wall page's own content was never (re-)inspected
+        // once that URL had been checked once early in the chain — the job
+        // just sat on the wall, silent, until the full job timeout. Content
+        // can change under a stable URL here, so this has to re-check every
+        // tick regardless of URL.
+        if (url && url !== 'about:blank') {
+          const pageText = (await evaluateWithTimeout(p, () => document.body?.innerText || '')) || '';
+          if (!deadCheckedUrls.has(url)) {
+            deadCheckedUrls.add(url);
+            if (isDeadLinkPage(pageText)) {
+              throw Object.assign(new Error(`Dead link detected at ${shorten(url)}`), { dead: true });
+            }
+          }
+          // Ad-gate anti-bot wall (confirmed on intercelestial.com/teknoasian.com's
+          // "LL" template) — a probabilistic judgment, not a hard block. Failing
+          // fast here (instead of idling out the job timeout) lets the queue's
+          // existing retry loop get a fresh token/session sooner, which is the
+          // only thing that actually improves the odds.
+          if (isAntiAutomationWallPage(pageText)) {
+            throw new Error(`Anti-automation wall detected at ${shorten(url)} — retrying with a fresh session`);
           }
         }
 
@@ -268,20 +383,58 @@ export class BypassEngine {
         // second if it doesn't resolve — one attempt per page landing here.
         if (isGoogleAuthHost(url) && !handledGoogleAuth) {
           handledGoogleAuth = true;
-          await ensureGoogleLogin(p, this.config.bypass.google, ctx).catch((err) => {
+          const loginResult = await ensureGoogleLogin(
+            p,
+            { ...this.config.bypass.google, profileDir: this.config.bypass.profileDir },
+            ctx,
+          ).catch((err) => {
             ctx.log?.(`Google login error: ${err.message}`);
+            return { loggedIn: false };
           });
+          if (!loginResult?.loggedIn) {
+            // Fail fast rather than idle on this wall for the rest of the job
+            // timeout — same reasoning as the anti-automation-wall/LL ad-gate
+            // checks above: a fresh job-queue retry is the only thing that
+            // actually improves the odds (a different/refreshed cookie set,
+            // or the operator fixing Settings), so there's no point waiting
+            // out the clock here. Throwing (instead of the old behavior of
+            // silently falling through) also means the checkpoint progress
+            // already made this attempt (pahe.plus/ouo/etc.) is preserved by
+            // the job queue's retry logic, instead of the next retry
+            // restarting the whole ad-chain from scratch.
+            throw new Error(
+              loginResult?.skipped
+                ? 'Google sign-in required but no Google account cookies are configured (Settings → Google Drive).'
+                : 'Google sign-in wall could not be bypassed — configured cookies may be expired or for the wrong account.',
+            );
+          }
         }
 
         // Reached a final host directly.
-        if (FINAL_HOST_RE.test(url)) {
+        if (FINAL_HOST_RE.test(hostnameOf(url))) {
           if (classifyFinalLink(url) === 'google-drive') {
             // Some Drive pages show an inline "Sign in" prompt rather than
             // redirecting to accounts.google.com — check here too. Cheap
-            // no-op for the common public "anyone with the link" case.
-            await ensureGoogleLogin(p, this.config.bypass.google, ctx).catch((err) => {
+            // no-op for the common public "anyone with the link" case
+            // (ensureGoogleLogin returns loggedIn:true immediately whenever
+            // the page doesn't actually need a login).
+            const loginResult = await ensureGoogleLogin(
+              p,
+              { ...this.config.bypass.google, profileDir: this.config.bypass.profileDir },
+              ctx,
+            ).catch((err) => {
               ctx.log?.(`Google login error: ${err.message}`);
+              return { loggedIn: false };
             });
+            if (!loginResult?.loggedIn) {
+              // Same reasoning as the accounts.google.com wall check above —
+              // don't report a broken sign-in-wall URL as a resolved link.
+              throw new Error(
+                loginResult?.skipped
+                  ? 'Google sign-in required but no Google account cookies are configured (Settings → Google Drive).'
+                  : 'Google sign-in wall could not be bypassed — configured cookies may be expired or for the wrong account.',
+              );
+            }
             // Cookie injection may have reloaded/redirected the page.
             const settledUrl = p.url();
             return { finalUrl: settledUrl, linkType: classifyFinalLink(settledUrl) };
@@ -345,6 +498,36 @@ export class BypassEngine {
           }).catch(() => {});
         }
 
+        // "LL" ad-gate template (intercelestial.com/teknoasian.com) gets
+        // handed off to a dedicated, isolated browser instance (see
+        // resolvers/llAdGate.js) rather than clicked through in-page on this
+        // shared job page/context. resolveLLAdGate deliberately reproduces
+        // the one configuration that showed signs of working earlier in
+        // this investigation — raw patchright.launchPersistentContext (not
+        // BrowserManager), a fresh throwaway profile deleted after every
+        // run, no injected automation script, and real page.click() for
+        // every button — rather than this app's usual stealth/speedup
+        // stack, specifically to test whether that config reproduces.
+        // Isolation is also a genuine, separate win regardless of outcome:
+        // a wall/hang/crash here can't take down the shared page/context
+        // everything else (GDFlix, captcha solving) runs in.
+        if (url && isLLAdGateUrl(url) && !handledLLGate) {
+          handledLLGate = true;
+          let llResult;
+          try {
+            llResult = await resolveLLAdGate(url, { ctx });
+          } catch (err) {
+            // One shot per job attempt — spawning a whole new browser
+            // instance to retry immediately would be wasteful, and a fresh
+            // job-queue retry gets a genuinely fresh session anyway. Fail
+            // fast rather than let the shared page idle out the rest of the
+            // job timeout sitting on the same unresolved ad-gate URL.
+            throw new Error(`LL ad-gate resolve failed: ${err.message}`);
+          }
+          ctx.log?.(`LL ad-gate resolved to ${shorten(llResult.finalUrl)}`);
+          await p.goto(llResult.finalUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+        }
+
         // Reached GDFlix — run the resolver once.
         if (isGdflixUrl(url) && !handledGdflix) {
           handledGdflix = true;
@@ -366,6 +549,25 @@ export class BypassEngine {
         const cap = await detectCaptcha(p);
         if (cap?.present) {
           ctx.log?.(`Captcha detected (${cap.kind}) at ${shorten(url)}`);
+          if (cap.kind === 'recaptcha-v2') {
+            const autoSolved = await tryAutoClickRecaptchaCheckbox(p);
+            if (autoSolved) {
+              ctx.log?.(`reCAPTCHA solved by checkbox click alone — no challenge, no manual/paid solve needed`);
+              continue;
+            }
+          }
+          // ManualSolver waits up to 5 minutes for a human to solve it — well
+          // past the default 180s job timeout. Without this, the outer
+          // `while (Date.now() < deadline)` check (which can't fire until
+          // this blocking await returns) sees the deadline as already
+          // expired the moment solve() comes back, and reports "Timed out"
+          // even on a successful solve — a real human's correct answer just
+          // silently discarded because it took longer than 3 minutes to
+          // find it. Extending the deadline past whatever this solve() call
+          // could take means a genuine solve always gets the chance to be
+          // acted on; it only ever pushes the deadline OUT, never in, so
+          // paid/automated solvers (which finish in seconds) are unaffected.
+          deadline = Math.max(deadline, Date.now() + 5 * 60 * 1000 + 15_000);
           await this.captcha.solve(p, ctx).catch(() => {});
         }
       }
@@ -379,6 +581,30 @@ export class BypassEngine {
 function shorten(u) {
   if (!u) return '';
   return u.length > 70 ? `${u.slice(0, 67)}…` : u;
+}
+
+// page.evaluate() has NO built-in timeout — if the page's own JS main
+// thread ever deadlocks (observed live: rapid decoy-clear-and-reclick
+// cycles racing the site's own sped-up regeneration timer can wedge it),
+// the CDP Runtime.evaluate call just waits forever, which hangs this
+// function's caller, which hangs the whole _driveToFinal poll loop —
+// including its own `Date.now() < deadline` check, since that's on the far
+// side of the stuck await. Racing every evaluate() in the hot click/check
+// path against an explicit timeout is what lets a wedged page still time
+// out and retry instead of hanging the job (and the whole poll loop, and
+// every other tab it's tracking) indefinitely.
+function evaluateWithTimeout(page, fn, arg, timeoutMs = 4000) {
+  const evalPromise = arg === undefined ? page.evaluate(fn) : page.evaluate(fn, arg);
+  const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(undefined), timeoutMs));
+  return Promise.race([evalPromise.catch(() => undefined), timeoutPromise]);
+}
+
+// Same rationale as evaluateWithTimeout — page.close() on a wedged page
+// (e.g. a popup whose own JS is stuck) can hang the poll loop too.
+function closeWithTimeout(page, timeoutMs = 3000) {
+  const closePromise = page.close().catch(() => {});
+  const timeoutPromise = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+  return Promise.race([closePromise, timeoutPromise]);
 }
 
 export default BypassEngine;

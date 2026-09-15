@@ -458,6 +458,11 @@
 
         <fieldset>
           <legend>GDFlix Authentication</legend>
+          <div class="muted small" style="margin-bottom: 10px;">
+            Prefer logging in directly over pasting cookies — a session created right here lives in the same
+            browser profile every job runs through, so it just works without any copy/paste.
+            <button type="button" id="btnOpenGdflixLogin" class="btn" style="padding: 3px 10px; font-size: 11px; height: auto; margin-left: 4px;">Buka halaman login GDFlix</button>
+          </div>
           <label>GDFlix Email
             <input name="gdflixEmail" type="email" placeholder="email@example.com" />
           </label>
@@ -503,14 +508,43 @@
 
         <fieldset>
           <legend>Google Drive Cookies</legend>
-          <label>Cookies (JSON array export or "name=value; name2=value2")
+          <div class="muted small" style="margin-bottom: 10px;">
+            Recommended over pasting cookies: Google binds a session to the network it was issued from
+            (the SIDCC cookie family) as anti-theft protection, so cookies exported from a different machine/network
+            routinely get silently rejected even when they're fresh. Logging in directly here avoids that entirely.
+            <button type="button" id="btnOpenGoogleLogin" class="btn" style="padding: 3px 10px; font-size: 11px; height: auto; margin-left: 4px;">Buka halaman login Google</button>
+          </div>
+          <label>Cookies (JSON array export or "name=value; name2=value2") — fallback if you can't log in directly
             <textarea name="googleCookies" rows="4" placeholder="[{&quot;name&quot;:&quot;SID&quot;,&quot;value&quot;:&quot;...&quot;,...}]  or  SID=...; HSID=...; SSID=..."></textarea>
           </label>
           <div class="muted small" style="margin-top: 6px;">
             Most "anyone with the link" Drive files need no login at all — these are only used when the resolved
-            link hits a Google sign-in wall (e.g. an account-restricted file). Export cookies from an
-            already-signed-in Google session and paste them here. Always remapped to <code>.google.com</code>
-            regardless of which Google subdomain they were recorded for.
+            link hits a Google sign-in wall (e.g. an account-restricted file). Always remapped to
+            <code>.google.com</code> regardless of which Google subdomain they were recorded for.
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>JDownloader</legend>
+          <div class="muted small" style="margin-bottom: 10px;">
+            When configured, every resolved link gets pushed straight into this device's linkgrabber via the
+            My.JDownloader API — no manual paste into JDownloader needed. Optional; leave blank to skip this step.
+          </div>
+          <label>My.JDownloader Email
+            <input name="jdownloaderEmail" type="email" placeholder="email@example.com" />
+          </label>
+          <label>My.JDownloader Password
+            <input name="jdownloaderPassword" type="password" placeholder="Password" />
+          </label>
+          <label>Device Name <span class="muted small">(as shown in My.JDownloader — blank = first device found)</span>
+            <input name="jdownloaderDeviceName" type="text" placeholder="JDOWNLOADER@DOCKER" />
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; flex-direction: row;">
+            <input name="jdownloaderAutostart" type="checkbox" style="width: auto;" />
+            Autostart downloads immediately (unchecked = add to linkgrabber only)
+          </label>
+          <div style="margin-top: 8px;">
+            <button type="button" id="btnTestJdownloader" class="btn ghost" style="padding: 4px 10px; font-size: 11px; height: auto;">Test Connection</button>
           </div>
         </fieldset>
 

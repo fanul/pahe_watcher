@@ -185,6 +185,14 @@ export class JobQueue {
       // The processor calls this when it needs manual captcha help; it returns
       // a promise that resolves once the GUI marks the captcha solved.
       setStatus: (status) => this._update(this.store.getJob(job.id), { status }),
+      // Persists the URL of the last known-good hop (e.g. the resolved
+      // pahe.plus/ouo.io link once a shortener stage is cleared) so a retry
+      // after this attempt fails can resume from there instead of walking
+      // the whole chain — including the flakiest step, intercelestial.com's
+      // ad-gate — from job.url again. See resolveHeadless/_driveToFinal's
+      // checkpoint calls in bypass/index.js for what counts as a hop worth
+      // saving.
+      setCheckpoint: (url) => this._update(this.store.getJob(job.id), { checkpointUrl: url }),
     };
 
     try {
@@ -194,7 +202,7 @@ export class JobQueue {
         log.info(`Job ${job.id.slice(0, 8)} was cancelled during execution`);
         return;
       }
-      this._update(this.store.getJob(job.id), { status: JobStatus.DONE, result, error: null });
+      this._update(this.store.getJob(job.id), { status: JobStatus.DONE, result, error: null, checkpointUrl: null });
       log.info(`Job ${job.id.slice(0, 8)} done`);
     } catch (err) {
       const fresh = this.store.getJob(job.id);
@@ -203,9 +211,25 @@ export class JobQueue {
         return;
       }
       const canRetry = !err?.dead && (fresh.attempts || 1) <= this.maxRetries;
+      // Checkpoint is deliberately left untouched on an ordinary failure —
+      // it used to get wiped whenever it hadn't moved forward *during this
+      // specific attempt*, on the theory that meant the checkpointed URL
+      // itself was stale. Confirmed live that's a false signal: an attempt
+      // resuming straight from a gdflix.io checkpoint routinely makes real
+      // further progress (through GDFlix, all the way to a Google sign-in
+      // page) without ever touching another checkpoint-worthy host past the
+      // resume point, so the checkpoint value never changes even though the
+      // attempt was clearly not stuck at the start. That wiped good
+      // checkpoints after one unrelated failure (an auth wall, a GDFlix
+      // hiccup) and forced every later retry back through intercelestial.
+      // com's flaky ad-gate from scratch. A checkpoint URL that's genuinely
+      // gone stale/dead (e.g. a consumed single-use shortener token) is
+      // caught directly by the dead-link detector on arrival — that's the
+      // `err.dead` branch below, a far more reliable signal than "did this
+      // attempt move the checkpoint."
       if (err?.dead) {
         log.error(`Job ${job.id.slice(0, 8)} confirmed dead, not retrying`, { error: String(err) });
-        this._update(fresh, { status: JobStatus.DEAD, error: String(err) });
+        this._update(fresh, { status: JobStatus.DEAD, error: String(err), checkpointUrl: null });
       } else if (canRetry) {
         log.warn(`Job ${job.id.slice(0, 8)} failed (attempt ${fresh.attempts}), requeueing`, {
           error: String(err),

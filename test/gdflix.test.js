@@ -42,6 +42,23 @@ test('classifyFinalLink identifies the resolved link type', () => {
   assert.equal(classifyFinalLink('https://gdflix.io/direct/abc'), 'direct');
 });
 
+test('classifyFinalLink does not mistake a Google sign-in wall for a resolved Drive link', () => {
+  // Regression: a real job ended up "done" with this exact URL as its
+  // finalUrl and linkType "google-drive" — it's actually just the sign-in
+  // wall Google shows for a restricted-access file. The wall's own
+  // ?continue=https://drive.google.com/... query string contains
+  // "drive.google.com" as a plain substring, which a full-URL regex test
+  // (the old implementation) can't distinguish from the host itself being
+  // drive.google.com. classifyFinalLink must look at the hostname only.
+  const signInWall =
+    'https://accounts.google.com/v3/signin/identifier?continue=https://drive.google.com/open?id%3D1KKn5nfrw4wD9aU_BLifBRPspDtQfz41p&followup=https://drive.google.com/open?id%3D1KKn5nfrw4wD9aU_BLifBRPspDtQfz41p&osid=1&passive=1209600&service=wise&flowName=GlifWebSignIn&flowEntry=ServiceLogin';
+  assert.equal(classifyFinalLink(signInWall), 'direct');
+
+  const accountChooserWall =
+    'https://accounts.google.com/v3/signin/accountchooser?continue=https://drive.google.com/open?id%3D1WM6-9ktL5DNNQYCkQqOmtMYs0qwTmNXV&followup=https://drive.google.com/open?id%3D1WM6-9ktL5DNNQYCkQqOmtMYs0qwTmNXV';
+  assert.equal(classifyFinalLink(accountChooserWall), 'direct');
+});
+
 test('resolveGdflix: clicking G-Drive Link waits for an actual Drive URL, ignoring an unrelated tab with a worker-proxy link', async () => {
   // Regression: clickAndAwaitLink used to accept ANY FINAL_HOST_RE match
   // (including pixeldrain/.r2.dev/workers.dev) regardless of which button

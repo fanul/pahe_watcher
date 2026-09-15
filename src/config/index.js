@@ -72,7 +72,7 @@ export function loadConfig() {
       speedUpPahe: envStr('BYPASS_SPEEDUP_PAHE', String(d.bypass.speedUpPahe)) === 'true',
       removeOuoAds: envStr('BYPASS_REMOVE_OUO_ADS', String(d.bypass.removeOuoAds)) === 'true',
       stealth: {
-        engine: envStr('BYPASS_STEALTH_ENGINE', d.bypass.stealth?.engine || 'patchright'),
+        engine: envStr('BYPASS_STEALTH_ENGINE', d.bypass.stealth?.engine || 'playwright'),
         chromeChannel: envStr('BYPASS_CHROME_CHANNEL', d.bypass.stealth?.chromeChannel ?? 'chrome'),
         disableAutomationFlag: envStr('BYPASS_STEALTH_DISABLE_AUTOMATION_FLAG', String(d.bypass.stealth?.disableAutomationFlag)) !== 'false',
         useStealthUserAgent: envStr('BYPASS_STEALTH_USE_STEALTH_USER_AGENT', String(d.bypass.stealth?.useStealthUserAgent)) !== 'false',
@@ -97,6 +97,12 @@ export function loadConfig() {
       google: {
         cookies: envStr('GOOGLE_DRIVE_COOKIES', d.bypass.google?.cookies || ''),
       },
+    },
+    jdownloader: {
+      email: envStr('JDOWNLOADER_EMAIL', d.jdownloader?.email || ''),
+      password: envStr('JDOWNLOADER_PASSWORD', d.jdownloader?.password || ''),
+      deviceName: envStr('JDOWNLOADER_DEVICE_NAME', d.jdownloader?.deviceName || ''),
+      autostart: envStr('JDOWNLOADER_AUTOSTART', String(d.jdownloader?.autostart ?? true)) !== 'false',
     },
     sheets: {
       serviceAccountKey: path.resolve(ROOT, envStr('GOOGLE_SERVICE_ACCOUNT_KEY', d.sheets.serviceAccountKey)),

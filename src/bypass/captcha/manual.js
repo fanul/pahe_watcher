@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { bus } from '../../core/eventBus.js';
 import { createLogger } from '../../core/logger.js';
+import { restoreWindow, minimizeWindow } from '../windowControl.js';
 
 const log = createLogger('captcha:manual');
 
@@ -38,6 +39,14 @@ export class ManualSolver {
     log.info('Manual captcha intervention requested', { requestId, url });
     ctx.log?.(`Captcha requires manual solving — open the browser window and solve it, then click "Solved". (${url})`);
     bus.emit('captcha:needed', { requestId, jobId: ctx.jobId, url });
+    // The window stays minimized/backgrounded the rest of the time (see
+    // browser.js's --start-minimized) so it doesn't steal focus during the
+    // fully-automated stretches; this is the one moment a human actually
+    // needs to look at it, so bring it forward. Both calls matter: restore
+    // handles the OS-level minimized state, bringToFront makes sure the
+    // right tab is the active one once the window is visible again.
+    await restoreWindow(page);
+    await page.bringToFront().catch((err) => log.warn(`bringToFront failed: ${err.message}`));
 
     const timeoutMs = 5 * 60 * 1000;
     let onPageClose;
@@ -79,6 +88,10 @@ export class ManualSolver {
       page.off('close', onPageClose);
     }
     this._pending.delete(requestId);
+
+    if (!page.isClosed()) {
+      await minimizeWindow(page);
+    }
 
     return { solved, method: 'manual', requestId };
   }
