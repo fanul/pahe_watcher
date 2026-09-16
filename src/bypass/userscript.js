@@ -373,7 +373,14 @@ export function getInjectedAutomationScript(config = {}) {
         document.querySelectorAll('div').forEach((el) => {
           try {
             const style = window.getComputedStyle(el);
-            if ((style.position !== 'fixed' && style.position !== 'absolute') || parseInt(style.zIndex, 10) <= 2000000000) return;
+            if (style.position !== 'fixed' && style.position !== 'absolute') return;
+            // parseInt('auto', 10) (a normal, legitimate default z-index)
+            // is NaN, and NaN <= N is always false — a plain <= skip-check
+            // alone silently treats "not a number" as "not too low" and
+            // lets it through. isNaN() has to be checked explicitly, not
+            // folded into the comparison.
+            const z = parseInt(style.zIndex, 10);
+            if (isNaN(z) || z <= 2000000000) return;
             if (el.querySelector('iframe')) return;
             const attrStr = ((el.className || '') + ' ' + (el.id || '')).toLowerCase();
             if (attrStr.includes('captcha') || attrStr.includes('turnstile')) return;
@@ -394,8 +401,19 @@ export function getInjectedAutomationScript(config = {}) {
         document.querySelectorAll('iframe').forEach((el) => {
           try {
             const style = window.getComputedStyle(el);
-            if ((style.position !== 'fixed' && style.position !== 'absolute') || parseInt(style.zIndex, 10) <= 2000000000) return;
+            if (style.position !== 'fixed' && style.position !== 'absolute') return;
+            const z = parseInt(style.zIndex, 10); // see the div loop above for why isNaN must be explicit
+            if (isNaN(z) || z <= 2000000000) return;
             if (el.getAttribute('src')) return;
+            // Confirmed live: Cloudflare Turnstile's own legitimate
+            // bootstrap iframe (invisible-mode) is also a src-less,
+            // position:absolute iframe — but it's 0x0 (z-index: auto, so
+            // the isNaN check above already excludes it in practice; this
+            // is a second, independent guard so a decoy that happens to
+            // share a real numeric z-index near this range still can't
+            // delete something that isn't actually covering the page).
+            const rect = el.getBoundingClientRect();
+            if (rect.width < 50 || rect.height < 50) return;
             console.log('[pahe-auto] Removed full-page click-decoy iframe (src-less, z-index ' + style.zIndex + ')');
             el.remove();
           } catch {}
