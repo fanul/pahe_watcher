@@ -361,30 +361,40 @@ export function getInjectedAutomationScript(config = {}) {
     // mentioning captcha/turnstile in its own attributes.
     function removeClickDecoyOverlays() {
       try {
+        // Confirmed live via a real (non-automated) browser session on
+        // srnky.com: document.elementFromPoint() at the "Continue" button's
+        // own coordinates resolved to a decoy <div> with the same INT32_MAX
+        // z-index signature, but position:absolute, not fixed — covering
+        // the full document (0,0 to the page's full scroll height), not
+        // just the viewport. position !== 'fixed' alone missed this
+        // entirely. The z-index threshold here (>2 billion) is so far past
+        // anything legitimate UI ever uses that broadening to absolute
+        // doesn't meaningfully risk false positives.
         document.querySelectorAll('div').forEach((el) => {
           try {
             const style = window.getComputedStyle(el);
-            if (style.position !== 'fixed' || parseInt(style.zIndex, 10) <= 2000000000) return;
+            if ((style.position !== 'fixed' && style.position !== 'absolute') || parseInt(style.zIndex, 10) <= 2000000000) return;
             if (el.querySelector('iframe')) return;
             const attrStr = ((el.className || '') + ' ' + (el.id || '')).toLowerCase();
             if (attrStr.includes('captcha') || attrStr.includes('turnstile')) return;
             el.remove();
           } catch {}
         });
-        // Same decoy signature (fixed, INT32_MAX z-index, full-viewport) but
-        // as a bare <iframe> sitting directly on <html> instead of a div —
-        // confirmed live on srnky.com/clksz.com: a src-less iframe at
-        // z-index 2147483647 covers the whole page and intercepts every
-        // click, including on the real #continue button underneath it
-        // (which is why it kept staying disabled/unclicked no matter how
-        // long automation waited). A real captcha iframe (hCaptcha/
-        // reCAPTCHA/Turnstile) always has a src pointing at the provider's
-        // own domain — this decoy never does, which is what tells them
-        // apart here instead of the class/id-based exclusion used above.
+        // Same decoy signature (fixed or absolute, INT32_MAX z-index,
+        // full-page) but as a bare <iframe> sitting directly on <html>
+        // instead of a div — confirmed live on srnky.com/clksz.com: a
+        // src-less iframe at z-index 2147483647 covers the whole page and
+        // intercepts every click, including on the real #continue button
+        // underneath it (which is why it kept staying disabled/unclicked no
+        // matter how long automation waited). A real captcha iframe
+        // (hCaptcha/reCAPTCHA/Turnstile) always has a src pointing at the
+        // provider's own domain — this decoy never does, which is what
+        // tells them apart here instead of the class/id-based exclusion
+        // used above.
         document.querySelectorAll('iframe').forEach((el) => {
           try {
             const style = window.getComputedStyle(el);
-            if (style.position !== 'fixed' || parseInt(style.zIndex, 10) <= 2000000000) return;
+            if ((style.position !== 'fixed' && style.position !== 'absolute') || parseInt(style.zIndex, 10) <= 2000000000) return;
             if (el.getAttribute('src')) return;
             console.log('[pahe-auto] Removed full-page click-decoy iframe (src-less, z-index ' + style.zIndex + ')');
             el.remove();
