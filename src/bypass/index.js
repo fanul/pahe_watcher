@@ -615,6 +615,16 @@ export class BypassEngine {
             throw new Error(`LL ad-gate resolve failed: ${err.message}`);
           }
           ctx.log?.(`LL ad-gate resolved to ${shorten(llResult.finalUrl)}`);
+          // Checkpoint immediately, regardless of whether this destination
+          // also happens to match CHECKPOINT_HOSTS below — escaping this
+          // gate is the slowest, most failure-prone step in the whole
+          // chain, so a retry after any later failure should never have to
+          // walk it again. maybeCheckpoint() only fires for whatever
+          // CHECKPOINT_HOSTS/GDFlix URL a later loop iteration happens to
+          // land on, which isn't guaranteed if the chain fails on some
+          // intermediate hop before reaching one of those hosts.
+          ctx.setCheckpoint?.(llResult.finalUrl);
+          lastCheckpointedUrl = llResult.finalUrl;
           await p.goto(llResult.finalUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
         }
 
