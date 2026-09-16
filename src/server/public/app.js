@@ -35,8 +35,20 @@ async function refreshStatusOnly() {
 
 // ── live log via WebSocket ──
 let currentWs = null;
+// Whether connectWs() has ever completed a connection before — an onopen
+// firing after this is true means a *re*connect (the WS dropped and came
+// back, e.g. a server restart), not the page's first load. Any job/post
+// events that happened during the gap were never delivered (the server
+// doesn't replay missed broadcasts), so the GUI silently goes stale until
+// something forces a refetch — confirmed live: a job that finished while
+// the connection was down stayed showing its old state until a manual
+// page reload. refreshAll() on every reconnect (skipped on the very first
+// connect, since the caller already does its own initial refreshAll())
+// closes that gap automatically.
+let hasConnectedBefore = false;
 function connectWs() {
   if (currentWs) {
+    currentWs.onopen = null;
     currentWs.onmessage = null;
     currentWs.onclose = null;
     currentWs.onerror = null;
@@ -48,12 +60,20 @@ function connectWs() {
   const ws = new WebSocket(`${proto}://${location.host}/ws${token ? `?token=${token}` : ''}`);
   currentWs = ws;
 
+  ws.onopen = () => {
+    if (hasConnectedBefore) {
+      refreshAll().catch((e) => appendLog({ ts: '', level: 'error', scope: 'ui', msg: String(e) }));
+    }
+    hasConnectedBefore = true;
+  };
+
   ws.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     handleEvent(m.type, m.payload);
   };
 
   ws.onclose = () => {
+    ws.onopen = null;
     ws.onmessage = null;
     ws.onclose = null;
     ws.onerror = null;
@@ -62,6 +82,7 @@ function connectWs() {
   };
 
   ws.onerror = () => {
+    ws.onopen = null;
     ws.onmessage = null;
     ws.onclose = null;
     ws.onerror = null;
