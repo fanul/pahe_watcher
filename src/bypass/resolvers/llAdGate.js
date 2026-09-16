@@ -138,6 +138,33 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
 
   try {
     const page = await browser.newPage();
+
+    // Confirmed via the community reference project's own reverse-engineered
+    // detection doc (INTERCELESTIAL_ISSUES.md, "dns-probes"/"decision-matrix"):
+    // the gate fetches 5 real Google/Amazon ad-network URLs and treats ≥2
+    // failures as a block signal (path C) — logged there as fired exactly
+    // this way via ERR_BLOCKED_BY_CLIENT. This network independently blocks
+    // Google ad domains at the DNS/network level (confirmed earlier this
+    // session via the same pagead2.googlesyndication.com fetch failing even
+    // in a real, non-automated browser) — so this isolated resolver's own
+    // requests to these URLs fail for a reason that has nothing to do with
+    // automation, and reads to the gate as "adblocker/bot". browser.js's
+    // newPage() already fakes the one of these five the main pipeline needs
+    // (adsbygoogle.js); this resolver runs its own separate raw patchright
+    // context and never got that fix, so all five stay faked here.
+    const AD_PROBE_URLS = [
+      '**://pagead2.googlesyndication.com/pagead/show_ads.js*',
+      '**://securepubads.g.doubleclick.net/tag/js/gpt.js*',
+      '**://www.googletagservices.com/tag/js/gpt.js*',
+      '**://s.amazon-adsystem.com/aax2/apstag.js*',
+      '**://www.googleadservices.com/pagead/conversion_async.js*',
+    ];
+    for (const pattern of AD_PROBE_URLS) {
+      await page.route(pattern, (route) =>
+        route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }),
+      ).catch(() => {});
+    }
+
     // Not minimized isn't automatically the same as visible/focused (a
     // freshly launched window can still land in the background depending
     // on the OS/window manager) — bringToFront() is what actually made the
