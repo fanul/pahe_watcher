@@ -41,6 +41,58 @@ function cleanupInBackground(browser, profileDir) {
 }
 
 /**
+ * Reads which .myButton instance (if any) is the real target — the first
+ * one NOT labeled "scroll" — and whether it's currently on-screen, plus
+ * whether a "Scroll Down" placeholder exists at all. Shared by the sweep
+ * logic below and the main loop so both act on the exact same snapshot.
+ */
+async function readButtonState(page) {
+  return page
+    .evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('.myButton')).map((el) => {
+        const rect = el.getBoundingClientRect();
+        return {
+          text: (el.textContent || '').trim(),
+          visible: rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= window.innerHeight,
+        };
+      });
+      const targetIndex = buttons.findIndex((b) => b.text && !/scroll/i.test(b.text));
+      return {
+        hasWb: !!document.getElementById('wb'),
+        hasMyButton: buttons.length > 0,
+        targetIndex,
+        targetVisible: targetIndex >= 0 ? buttons[targetIndex].visible : false,
+        hasScrollButton: buttons.some((b) => /scroll/i.test(b.text)),
+      };
+    })
+    .catch(() => ({ hasWb: false, hasMyButton: false, targetIndex: -1, targetVisible: false, hasScrollButton: false }));
+}
+
+/**
+ * Sweeps all the way to one end of the page (real, trusted mouse-wheel
+ * events, not JS scrollTo/scrollBy) rather than a single computed jump.
+ * Confirmed live: this template can shift which .myButton instance is the
+ * real one unpredictably as earlier steps complete (content loading/
+ * collapsing), so a "smart" scroll to one specific element isn't reliable
+ * enough on its own — a full sweep to a page extreme is a fixed, always-
+ * reachable reference point a human effectively falls back on too when a
+ * page's layout misbehaves. Stops once scrollY stops moving between ticks
+ * (genuinely reached that end) or the deadline/tick budget runs out.
+ */
+async function sweepToExtreme(page, direction, deadline) {
+  const deltaY = direction === 'down' ? 900 : -900;
+  let lastY = null;
+  for (let i = 0; i < 25 && Date.now() < deadline; i++) {
+    await page.mouse.wheel(0, deltaY).catch(() => {});
+    await page.waitForTimeout(randomDelay(150, 300));
+    const y = await page.evaluate(() => window.scrollY).catch(() => null);
+    if (y === null) break;
+    if (y === lastY) break; // no further movement — reached this end
+    lastY = y;
+  }
+}
+
+/**
  * Confirmed live: this template can put TWO `.myButton` instances on the
  * page at once (e.g. one near the top, one further down after a "Scroll
  * Down" step) — `document.querySelector` would always grab whichever is
@@ -264,82 +316,35 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       // — instead of just the first DOM match — means the scroll-vs-click
       // decision below is based on what's actually usable right now, not
       // on whichever button happens to come first in the markup.
-      const buttonState = await page
-        .evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll('.myButton')).map((el) => {
-            const rect = el.getBoundingClientRect();
-            return {
-              text: (el.textContent || '').trim(),
-              visible: rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= window.innerHeight,
-            };
-          });
-          // First non-"scroll"-labeled instance, tracked by index into the
-          // SAME querySelectorAll('.myButton') order .nth() below uses —
-          // found regardless of whether it's currently on-screen, so a
-          // real target that's off-screen (above OR below the current
-          // scroll position) is still identified deterministically instead
-          // of only ever being discovered by scrolling down and hoping.
-          const targetIndex = buttons.findIndex((b) => b.text && !/scroll/i.test(b.text));
-          return {
-            hasWb: !!document.getElementById('wb'),
-            hasMyButton: buttons.length > 0,
-            targetIndex,
-            targetVisible: targetIndex >= 0 ? buttons[targetIndex].visible : false,
-            hasScrollButton: buttons.some((b) => /scroll/i.test(b.text)),
-          };
-        })
-        .catch(() => ({ hasWb: false, hasMyButton: false, targetIndex: -1, targetVisible: false, hasScrollButton: false }));
+      let buttonState = await readButtonState(page);
 
-      // A real, findable target (even off-screen) always takes priority —
-      // scroll directly to that exact instance via Playwright's own
-      // actionability scrolling, which (unlike a fixed-size wheel loop)
-      // works in either direction and needs no guessing about how far.
-      // Confirmed live: a wheel-only "always scroll down" loop can't
-      // recover when the target ends up ABOVE the current scroll position
-      // (the page's own script re-ordering/collapsing content as other
-      // steps complete), which is what forced manual up/down scrolling —
-      // this fixes that structurally, not just the down case.
-      if (buttonState.targetIndex >= 0 && !buttonState.targetVisible) {
-        ctx.log?.('[llGate] Target button is off-screen — scrolling directly to it');
-        await page.locator('.myButton').nth(buttonState.targetIndex).scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-        await page.waitForTimeout(randomDelay(200, 400));
-        continue;
-      }
+      // Not visible at the current scroll position (whether or not a real
+      // target even exists in the DOM yet) — do a full deterministic
+      // sweep: all the way to the bottom, re-check; if still not there,
+      // all the way to the top, re-check. Reported live: this template can
+      // reshuffle which instance is the real one unpredictably enough that
+      // scrolling to one specific computed position wasn't reliable and
+      // needed manual up/down scrolling to actually find it — sweeping
+      // both fixed extremes and re-checking at each is what fixes that
+      // structurally, not a smarter single guess.
+      if (!buttonState.hasWb && (buttonState.targetIndex < 0 || !buttonState.targetVisible)) {
+        ctx.log?.('[llGate] Button not visible here — sweeping to the bottom of the page');
+        await sweepToExtreme(page, 'down', deadline);
+        buttonState = await readButtonState(page);
 
-      // No real button exists in the DOM at all yet (only a "Scroll Down"
-      // placeholder) — this page genuinely lazy-reveals the next button
-      // only once you scroll, so there's nothing to target an index at
-      // until then. Real mouse wheel events (not JS scrollBy, which isn't
-      // a trusted user gesture), checking after each tick whether a real
-      // target has appeared anywhere in the DOM yet.
-      if (buttonState.targetIndex < 0 && !buttonState.hasWb && buttonState.hasScrollButton) {
-        ctx.log?.('[llGate] "Scroll Down" step — scrolling until a real button appears in the DOM');
-        let revealed = false;
-        for (let i = 0; i < 20 && Date.now() < deadline; i++) {
-          await page.mouse.wheel(0, 250).catch(() => {});
-          await page.waitForTimeout(randomDelay(200, 400));
-
-          const state = await page
-            .evaluate(() => {
-              const buttons = Array.from(document.querySelectorAll('.myButton')).map((el) => (el.textContent || '').trim());
-              const atBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 5;
-              const found = buttons.find((t) => t && !/scroll/i.test(t));
-              return { foundText: found || null, atBottom };
-            })
-            .catch(() => ({ foundText: null, atBottom: false }));
-
-          if (state.foundText) {
-            ctx.log?.(`[llGate] "${state.foundText}" appeared in the DOM after scrolling`);
-            revealed = true;
-            break;
-          }
-          if (state.atBottom) {
-            ctx.log?.('[llGate] Reached the bottom of the page while scrolling for the button');
-            break;
-          }
+        if (buttonState.targetIndex < 0 || !buttonState.targetVisible) {
+          ctx.log?.('[llGate] Not found at the bottom — sweeping to the top of the page');
+          await sweepToExtreme(page, 'up', deadline);
+          buttonState = await readButtonState(page);
         }
-        if (!revealed) await page.waitForTimeout(randomDelay(400, 800));
-        continue;
+
+        if (buttonState.targetIndex >= 0 && buttonState.targetVisible) {
+          ctx.log?.('[llGate] Button now visible after sweeping');
+        } else {
+          ctx.log?.('[llGate] Still not visible after a full top-to-bottom sweep — waiting for the page to change');
+          await page.waitForTimeout(randomDelay(500, 900));
+          continue;
+        }
       }
 
       const sel = buttonState.hasWb ? '#wb' : (buttonState.hasMyButton ? '.myButton' : null);
