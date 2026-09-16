@@ -21,6 +21,25 @@ export function isLLAdGateUrl(url) {
 
 const randomDelay = (minMs, maxMs) => minMs + Math.random() * (maxMs - minMs);
 
+// Deliberately NOT awaited by callers — closing a real Chrome process and
+// recursively deleting its profile directory (cache, cookie DB, etc.) is
+// genuinely slow (can run into multiple seconds, worse on Windows), and
+// none of it needs to finish before the caller acts on an already-known
+// result. Reported live: the main browser sat idle for a visible beat
+// after "[llGate] Escaped ad-gate to ..." was logged before it actually
+// navigated there — that gap was this cleanup blocking the function's
+// return, not anything about the navigation itself.
+function cleanupInBackground(browser, profileDir) {
+  browser
+    .close()
+    .catch((err) => log.warn(`Cleanup error: ${err.message}`))
+    .finally(() =>
+      fs.promises.rm(profileDir, { recursive: true, force: true }).catch((err) => {
+        log.warn(`Profile cleanup error: ${err.message}`);
+      }),
+    );
+}
+
 /**
  * Confirmed live: this template can put TWO `.myButton` instances on the
  * page at once (e.g. one near the top, one further down after a "Scroll
@@ -196,6 +215,7 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
 
       if (url && url !== 'about:blank' && !isLLAdGateUrl(url)) {
         ctx.log?.(`[llGate] Escaped ad-gate to ${url.slice(0, 60)}…`);
+        cleanupInBackground(browser, profileDir);
         return { finalUrl: url };
       }
 
@@ -253,25 +273,47 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
               visible: rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= window.innerHeight,
             };
           });
+          // First non-"scroll"-labeled instance, tracked by index into the
+          // SAME querySelectorAll('.myButton') order .nth() below uses —
+          // found regardless of whether it's currently on-screen, so a
+          // real target that's off-screen (above OR below the current
+          // scroll position) is still identified deterministically instead
+          // of only ever being discovered by scrolling down and hoping.
+          const targetIndex = buttons.findIndex((b) => b.text && !/scroll/i.test(b.text));
           return {
             hasWb: !!document.getElementById('wb'),
             hasMyButton: buttons.length > 0,
-            hasVisibleNonScrollButton: buttons.some((b) => b.text && !/scroll/i.test(b.text) && b.visible),
+            targetIndex,
+            targetVisible: targetIndex >= 0 ? buttons[targetIndex].visible : false,
             hasScrollButton: buttons.some((b) => /scroll/i.test(b.text)),
           };
         })
-        .catch(() => ({ hasWb: false, hasMyButton: false, hasVisibleNonScrollButton: false, hasScrollButton: false }));
+        .catch(() => ({ hasWb: false, hasMyButton: false, targetIndex: -1, targetVisible: false, hasScrollButton: false }));
 
-      // Only actually scroll when there's nothing already clickable on
-      // screen — a visible "Continue"/"Generate Link" instance always
-      // takes priority over chasing a scroll-labeled one elsewhere on the
-      // page. Real mouse wheel events (not JS scrollBy, which isn't a
-      // trusted user gesture), in small increments, checking after each
-      // one whether a different, genuinely on-screen button has appeared —
-      // not just present somewhere in the DOM off-screen — rather than a
-      // single fixed-size jump that might stop short of ever revealing it.
-      if (!buttonState.hasVisibleNonScrollButton && !buttonState.hasWb && buttonState.hasScrollButton) {
-        ctx.log?.('[llGate] "Scroll Down" step — scrolling until a clickable button comes into view');
+      // A real, findable target (even off-screen) always takes priority —
+      // scroll directly to that exact instance via Playwright's own
+      // actionability scrolling, which (unlike a fixed-size wheel loop)
+      // works in either direction and needs no guessing about how far.
+      // Confirmed live: a wheel-only "always scroll down" loop can't
+      // recover when the target ends up ABOVE the current scroll position
+      // (the page's own script re-ordering/collapsing content as other
+      // steps complete), which is what forced manual up/down scrolling —
+      // this fixes that structurally, not just the down case.
+      if (buttonState.targetIndex >= 0 && !buttonState.targetVisible) {
+        ctx.log?.('[llGate] Target button is off-screen — scrolling directly to it');
+        await page.locator('.myButton').nth(buttonState.targetIndex).scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+        await page.waitForTimeout(randomDelay(200, 400));
+        continue;
+      }
+
+      // No real button exists in the DOM at all yet (only a "Scroll Down"
+      // placeholder) — this page genuinely lazy-reveals the next button
+      // only once you scroll, so there's nothing to target an index at
+      // until then. Real mouse wheel events (not JS scrollBy, which isn't
+      // a trusted user gesture), checking after each tick whether a real
+      // target has appeared anywhere in the DOM yet.
+      if (buttonState.targetIndex < 0 && !buttonState.hasWb && buttonState.hasScrollButton) {
+        ctx.log?.('[llGate] "Scroll Down" step — scrolling until a real button appears in the DOM');
         let revealed = false;
         for (let i = 0; i < 20 && Date.now() < deadline; i++) {
           await page.mouse.wheel(0, 250).catch(() => {});
@@ -279,21 +321,15 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
 
           const state = await page
             .evaluate(() => {
-              const buttons = Array.from(document.querySelectorAll('.myButton')).map((el) => {
-                const rect = el.getBoundingClientRect();
-                return {
-                  text: (el.textContent || '').trim(),
-                  visible: rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= window.innerHeight,
-                };
-              });
+              const buttons = Array.from(document.querySelectorAll('.myButton')).map((el) => (el.textContent || '').trim());
               const atBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 5;
-              const found = buttons.find((b) => b.text && !/scroll/i.test(b.text) && b.visible);
-              return { foundText: found?.text || null, atBottom };
+              const found = buttons.find((t) => t && !/scroll/i.test(t));
+              return { foundText: found || null, atBottom };
             })
             .catch(() => ({ foundText: null, atBottom: false }));
 
           if (state.foundText) {
-            ctx.log?.(`[llGate] "${state.foundText}" now in view after scrolling`);
+            ctx.log?.(`[llGate] "${state.foundText}" appeared in the DOM after scrolling`);
             revealed = true;
             break;
           }
@@ -321,11 +357,9 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       }
     }
     throw new Error('LL ad-gate resolver timed out');
-  } finally {
-    await browser.close().catch((err) => log.warn(`Cleanup error: ${err.message}`));
-    await fs.promises.rm(profileDir, { recursive: true, force: true }).catch((err) => {
-      log.warn(`Profile cleanup error: ${err.message}`);
-    });
+  } catch (err) {
+    cleanupInBackground(browser, profileDir);
+    throw err;
   }
 }
 

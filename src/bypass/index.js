@@ -206,11 +206,44 @@ export class BypassEngine {
     // Track the initial page
     trackPage(page);
 
+    // Reused by both the immediate popup-closer right below and
+    // _driveToFinal's own poll-tick pruning further down — same list, so a
+    // popup landing on a real ad-chain host never gets closed either way.
+    const WHITELIST_DOMAINS = this.config?.bypass?.tabPruningWhitelist || [
+      ...AD_HOSTS,
+      'gdflix', 'drive.google', 'pixeldrain', 'pixeldra.in', 'about:blank',
+    ];
+
     // Track any new tabs or popups created in this context
     const onPage = (newPage) => {
       activePages.add(newPage);
       ctx.log?.(`[tab] New tab opened: ${shorten(newPage.url())}`);
       trackPage(newPage);
+
+      // Close ad-chain popups the instant they open and reclaim focus on
+      // the real page, instead of waiting for the next ~1s poll tick in
+      // _driveToFinal (which also only ran at all when pruneAdTabs was
+      // explicitly enabled — off by default). Reported live on pahe.plus:
+      // every click there pop-unders a new ad tab and steals focus, and it
+      // sat there disrupting things until the next tick closed it — same
+      // "popup steals focus" problem llAdGate.js already solves for
+      // intercelestial.com, just missing here for the shared main browser.
+      // A brief wait lets the popup's URL settle before checking it against
+      // the whitelist (a fresh popup often starts at about:blank for a
+      // moment) — every domain actually part of a real chain step is in
+      // AD_HOSTS/WHITELIST_DOMAINS, so this never fights a legitimate hop.
+      newPage
+        .waitForLoadState('domcontentloaded', { timeout: 3000 })
+        .catch(() => {})
+        .then(() => {
+          if (newPage.isClosed()) return;
+          const popupUrl = newPage.url().toLowerCase();
+          const isWhitelisted = popupUrl === 'about:blank' || WHITELIST_DOMAINS.some((d) => popupUrl.includes(d));
+          if (isWhitelisted) return;
+          ctx.log?.(`[tab] Closing ad popup and reclaiming focus: ${shorten(newPage.url())}`);
+          newPage.close().catch(() => {});
+          page.bringToFront().catch(() => {});
+        });
     };
     context.on('page', onPage);
 
