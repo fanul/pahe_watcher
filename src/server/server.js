@@ -6,9 +6,12 @@ import { WebSocketServer } from 'ws';
 import { createLogger } from '../core/logger.js';
 import { bus } from '../core/eventBus.js';
 import { createApiRouter } from './routes/api.js';
+import { buildRedirectUri } from '../drive/driveBackupClient.js';
 
 const log = createLogger('server');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 /**
  * HTTP + WebSocket server. Serves the static GUI, mounts the REST API, and
@@ -28,6 +31,30 @@ export function createServer(app) {
       next();
     });
   }
+
+  // Deliberately outside /api — this is Google redirecting the user's own
+  // browser back here as a plain top-level navigation, not a fetch() call,
+  // so it never carries the x-gui-token header the /api guard requires.
+  // Safe to leave unauthenticated: the `code` param is single-use and
+  // short-lived, and useless without this server's own OAuth client secret.
+  expressApp.get('/oauth/drive/callback', async (req, res) => {
+    const { code, error } = req.query;
+    if (error) {
+      return res.status(400).send(`<html><body style="font-family:sans-serif;padding:40px">Authorization failed: ${escapeHtml(error)}. You can close this tab.</body></html>`);
+    }
+    if (!code) {
+      return res.status(400).send('Missing code');
+    }
+    try {
+      const redirectUri = buildRedirectUri(req);
+      const refreshToken = await app.driveBackup.completeAuth(code, redirectUri);
+      await app.updateConfig({ driveBackup: { oauthRefreshToken: refreshToken } });
+      res.send('<html><body style="font-family:sans-serif;padding:40px"><h2>✅ Google Drive connected</h2><p>You can close this tab and go back to pahe-watcher.</p></body></html>');
+    } catch (err) {
+      log.error('Drive OAuth callback failed', { error: String(err) });
+      res.status(500).send(`<html><body style="font-family:sans-serif;padding:40px">Failed to complete authorization: ${escapeHtml(err.message)}</body></html>`);
+    }
+  });
 
   expressApp.use('/api', createApiRouter(app));
   expressApp.use(express.static(path.join(__dirname, 'public')));

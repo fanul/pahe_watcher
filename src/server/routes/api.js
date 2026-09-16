@@ -2,6 +2,7 @@ import express from 'express';
 import { bus } from '../../core/eventBus.js';
 import { selectOptions, checkIsSeries } from '../../parser/postParser.js';
 import { buildBackupZip, restoreBackupZip } from '../../core/backup.js';
+import { buildRedirectUri } from '../../drive/driveBackupClient.js';
 
 /** Same derivation the chip UI uses (src/server/public/js/posts.js) to label a link's codec from its raw quality label. */
 function deriveCodec(qualityLabel) {
@@ -30,7 +31,7 @@ function renderReportTemplate(template, { post, option }) {
  */
 export function createApiRouter(app) {
   const router = express.Router();
-  const { store, watcher, queue, bypass, sheets, jdownloader, runtime } = app;
+  const { store, watcher, queue, bypass, sheets, jdownloader, driveBackup, runtime } = app;
 
   // ── status ──
   router.get('/status', async (req, res) => {
@@ -419,6 +420,56 @@ export function createApiRouter(app) {
     // only safe way to pick up the replacement. Under Docker
     // (restart: unless-stopped) or any process supervisor this comes back up
     // automatically; run standalone, it needs a manual restart.
+    setTimeout(() => {
+      app.shutdown().catch(() => {}).finally(() => process.exit(0));
+    }, 250);
+  });
+
+  // ── Google Drive backup (same zip as /backup/export, stored on Drive) ──
+  router.get('/backup/drive/test', async (req, res) => {
+    res.json(await driveBackup.testConnection());
+  });
+
+  router.get('/backup/drive/oauth/url', (req, res) => {
+    try {
+      const url = driveBackup.buildAuthUrl(buildRedirectUri(req));
+      res.json({ ok: true, url });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  router.get('/backup/drive/list', async (req, res) => {
+    try {
+      res.json({ ok: true, files: await driveBackup.list() });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  router.post('/backup/drive/upload', async (req, res) => {
+    try {
+      const buffer = buildBackupZip({ store, runtime });
+      const file = await driveBackup.upload(buffer);
+      res.json({ ok: true, file });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  router.post('/backup/drive/restore', async (req, res) => {
+    const { fileId } = req.body || {};
+    if (!fileId) return res.status(400).json({ ok: false, error: 'Missing fileId' });
+    try {
+      const buffer = await driveBackup.download(fileId);
+      restoreBackupZip(buffer, {
+        sqlitePath: runtime.store.sqlitePath,
+        serviceAccountKeyPath: runtime.sheets.serviceAccountKey,
+      });
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+    res.json({ ok: true, restarting: true });
     setTimeout(() => {
       app.shutdown().catch(() => {}).finally(() => process.exit(0));
     }, 250);

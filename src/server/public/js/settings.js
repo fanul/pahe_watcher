@@ -10,6 +10,7 @@ import { populateGoogleSettings, serializeGoogleSettings } from './settings/goog
 import { populateSyncSettings, serializeSyncSettings } from './settings/sync.js';
 import { populateDeadLinkReportSettings, serializeDeadLinkReportSettings } from './settings/deadLinkReport.js';
 import { initBackupSettings } from './settings/backup.js';
+import { populateDriveBackupSettings, serializeDriveBackupSettings, initDriveBackupSettings, refreshDriveBackupList } from './settings/driveBackup.js';
 
 export function applyLayoutMode() {
   const mode = localStorage.getItem('layoutMode') || 'stay-on-top';
@@ -46,6 +47,7 @@ export function initSettings(refreshAll) {
   providerSelect.addEventListener('change', () => updateGroupVisibility(f));
   initGdflixSettings(f);
   initBackupSettings();
+  initDriveBackupSettings(f);
 
   const btnGoogleLogin = $('#btnOpenGoogleLogin');
   if (btnGoogleLogin) btnGoogleLogin.onclick = () => openLoginHelper('https://accounts.google.com/signin');
@@ -73,6 +75,8 @@ export function initSettings(refreshAll) {
     populateBypassSettings(f, cfg);
     populateSheetsSettings(f, cfg);
     populateJdownloaderSettings(f, cfg);
+    populateDriveBackupSettings(f, cfg);
+    refreshDriveBackupList();
     populateCaptchaSettings(f, cfg);
     populateGdflixSettings(f, cfg);
     populateGoogleSettings(f, cfg);
@@ -104,6 +108,7 @@ export function initSettings(refreshAll) {
       },
       sheets: serializeSheetsSettings(f),
       jdownloader: serializeJdownloaderSettings(f),
+      driveBackup: serializeDriveBackupSettings(f),
       sync: serializeSyncSettings(f),
       deadLinkReport: serializeDeadLinkReportSettings(f)
     };

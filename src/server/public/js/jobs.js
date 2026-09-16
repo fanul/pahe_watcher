@@ -96,10 +96,25 @@ export function renderJobs(state) {
     // Sits just left of the status pill — j.result.jdownloaderPushed is
     // null when JDownloader isn't configured (or this job never reached
     // that step), so the badge only shows up once a push was actually
-    // attempted.
+    // attempted. Once pushed, downloadMonitor.js polls JDownloader in the
+    // background and fills in jdownloaderStatus/Progress/SaveTo — this
+    // reads whatever it last saw, live (job:updated over the websocket
+    // triggers a re-render), no separate streaming connection needed.
     let jdownloaderBadge = '';
+    let jdownloaderSaveToLine = '';
     if (j.result?.jdownloaderPushed === true) {
-      jdownloaderBadge = `<span class="job-status" style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399;" title="Pushed to JDownloader">⬇ JDownloader</span>`;
+      const dlStatus = j.result?.jdownloaderStatus;
+      const progress = j.result?.jdownloaderProgress;
+      if (dlStatus === 'finished') {
+        jdownloaderBadge = `<span class="job-status jdownloader-finished" title="Finished downloading in JDownloader${j.result?.jdownloaderSaveTo ? ' — ' + esc(j.result.jdownloaderSaveTo) : ''}">✨ Downloaded</span>`;
+      } else if (dlStatus === 'running') {
+        jdownloaderBadge = `<span class="job-status" style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.4); color: #818cf8;" title="Downloading in JDownloader">⬇ ${progress ?? 0}%</span>`;
+      } else {
+        jdownloaderBadge = `<span class="job-status" style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399;" title="Pushed to JDownloader">⬇ JDownloader</span>`;
+      }
+      if (j.result?.jdownloaderSaveTo) {
+        jdownloaderSaveToLine = `<div class="muted small" style="margin-top:2px" title="${esc(j.result.jdownloaderSaveTo)}">📁 ${esc(j.result.jdownloaderSaveTo)}</div>`;
+      }
     } else if (j.result?.jdownloaderPushed === false) {
       jdownloaderBadge = `<span class="job-status" style="background: rgba(248, 81, 73, 0.15); border: 1px solid rgba(248, 81, 73, 0.4); color: var(--red);" title="${esc(j.result?.jdownloaderError || 'JDownloader push failed')}">⬇ JDownloader failed</span>`;
     }
@@ -115,6 +130,7 @@ export function renderJobs(state) {
           </div>
         </div>
         ${final}
+        ${jdownloaderSaveToLine}
         ${logs ? `<div class="joblog">${esc(logs)}</div>` : ''}
         ${acts.length ? `<div class="actions" style="margin-top:6px">${acts.join('')}</div>` : ''}
       </div>

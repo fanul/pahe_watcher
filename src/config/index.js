@@ -109,6 +109,20 @@ export function loadConfig() {
       sheetId: envStr('GOOGLE_SHEET_ID', d.sheets.sheetId),
       tab: envStr('GOOGLE_SHEET_TAB', d.sheets.tab),
     },
+    driveBackup: {
+      folderId: envStr('GOOGLE_DRIVE_BACKUP_FOLDER_ID', d.driveBackup?.folderId || ''),
+      // OAuth2 with the operator's own Google account, not a service
+      // account — service accounts have no storage quota of their own in a
+      // regular Drive folder and can't create files there (confirmed live).
+      // clientId/clientSecret come from a one-time Google Cloud OAuth client
+      // setup; refreshToken is normally obtained via the Settings → Backup &
+      // Restore "Connect Google Drive" button (see routes/api.js's
+      // /backup/drive/oauth/* endpoints), not typed in by hand — the env
+      // var exists mainly so a previously-obtained token can be pinned.
+      oauthClientId: envStr('GOOGLE_DRIVE_BACKUP_OAUTH_CLIENT_ID', d.driveBackup?.oauthClientId || ''),
+      oauthClientSecret: envStr('GOOGLE_DRIVE_BACKUP_OAUTH_CLIENT_SECRET', d.driveBackup?.oauthClientSecret || ''),
+      oauthRefreshToken: envStr('GOOGLE_DRIVE_BACKUP_OAUTH_REFRESH_TOKEN', d.driveBackup?.oauthRefreshToken || ''),
+    },
     sync: {
       backfillBatchSize: envInt('SYNC_BACKFILL_BATCH_SIZE', d.sync.backfillBatchSize),
       backfillDirection: envStr('SYNC_BACKFILL_DIRECTION', d.sync.backfillDirection),

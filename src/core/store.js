@@ -104,6 +104,13 @@ export class Store {
       deleteJob: this.db.prepare('DELETE FROM jobs WHERE id = ?'),
       getMeta: this.db.prepare('SELECT value FROM meta WHERE key = ?'),
       setMeta: this.db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'),
+      getShortlinkCache: this.db.prepare('SELECT destination_url, resolved_at FROM shortlink_cache WHERE source_url = ?'),
+      setShortlinkCache: this.db.prepare(`
+        INSERT INTO shortlink_cache (source_url, destination_url, resolved_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(source_url) DO UPDATE SET destination_url=excluded.destination_url, resolved_at=excluded.resolved_at
+      `),
+      deleteShortlinkCache: this.db.prepare('DELETE FROM shortlink_cache WHERE source_url = ?'),
       searchPosts: this.db.prepare(`
         SELECT posts.* FROM posts_fts
         JOIN posts ON posts.id = posts_fts.rowid
@@ -681,6 +688,31 @@ export class Store {
 
   setMeta(key, value) {
     this._stmt.setMeta.run(key, JSON.stringify(value));
+  }
+
+  // ── shortlink cache ──
+  /**
+   * Cached final destination for a shortlink entry URL (job.url), so a later
+   * resolve() of the exact same entry link can skip the whole ad chain — see
+   * bypass/index.js's resolve(). maxAgeMs default 24h: long enough to help a
+   * lost-checkpoint retry or a re-queued job, short enough that a Drive link
+   * revoked/rotated meanwhile isn't trusted indefinitely. BypassEngine also
+   * evicts an entry immediately on any failure reached via a cached
+   * destination, so staleness self-heals faster than the TTL in practice.
+   */
+  getCachedDestination(sourceUrl, maxAgeMs = 24 * 60 * 60 * 1000) {
+    const row = this._stmt.getShortlinkCache.get(sourceUrl);
+    if (!row) return null;
+    if (maxAgeMs && Date.now() - new Date(row.resolved_at).getTime() > maxAgeMs) return null;
+    return row.destination_url;
+  }
+
+  setCachedDestination(sourceUrl, destinationUrl) {
+    this._stmt.setShortlinkCache.run(sourceUrl, destinationUrl, new Date().toISOString());
+  }
+
+  deleteCachedDestination(sourceUrl) {
+    this._stmt.deleteShortlinkCache.run(sourceUrl);
   }
 }
 

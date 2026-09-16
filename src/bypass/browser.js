@@ -220,6 +220,22 @@ export class BrowserManager {
         return route.continue();
       });
     }
+
+    // Some ad-gate sites (confirmed live: clksz.com) "detect adblock" by
+    // fetch()-ing Google AdSense's real adsbygoogle.js and checking whether
+    // it resolves — if it rejects, they show a "please disable Adblock"
+    // wall with no real button to click through. Confirmed live this fetch
+    // fails even in a completely separate, non-automated browser on this
+    // network — googlesyndication.com is blocked at the network/firewall
+    // level here (common on corporate/government networks), which has
+    // nothing to do with whether THIS browser has an adblocker. Faking a
+    // successful empty response for just this one URL lets that specific
+    // check pass honestly on its own terms, without a general-purpose
+    // ad-fetch-faking mechanism.
+    await page.route('**://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js*', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }),
+    );
+
     return page;
   }
 

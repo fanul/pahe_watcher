@@ -96,6 +96,84 @@
 
       const captchaForm = document.querySelector('form#form-continue, form#form-captcha, form:not(.td-search-form):not(.go-link)');
       if (captchaForm && !window.__done) {
+        // Confirmed live (srnky.com/clksz.com) via a Node-side DOM dump: the
+        // "verify" button here (#continue / .btn-captcha — the same
+        // element) is gated by a REAL Cloudflare Turnstile challenge — a
+        // hidden cf-turnstile-response/visit_token field that only gets a
+        // value once Turnstile actually passes. While gated, its onclick is
+        // `window.open(adUrl)` (an ad decoy, not the real action); the
+        // onclick clears a few seconds in, but the button itself stays
+        // disabled until Turnstile solves. Force-removing `disabled` and
+        // clicking it — what this used to do — submits the form before that
+        // token exists, which the server reads as a bot submission and
+        // bounces the job through an ad-redirect chain (hai8g.com →
+        // advertisingcamps.com → taboola.com) every time. There is no
+        // click-based workaround for that (real OR synthetic click — a
+        // click on a still-gated button is premature either way); only
+        // waiting for it to become naturally enabled is safe, matching a
+        // community reference implementation for this exact template.
+        const continueBtn = document.querySelector('#continue:not([disabled]), button.btn-captcha:not([disabled])');
+        if (continueBtn) {
+          console.log('[pahe-auto] [oii.la] Clicking #continue');
+          continueBtn.click();
+          window.__clickedHuman = true;
+          window.__humanClickedAt = Date.now();
+          return;
+        }
+        // A verify-looking button exists but is still disabled — keep
+        // waiting indefinitely (next 500ms tick), never force it.
+        if (document.querySelector('#continue, button.btn-captcha')) return;
+
+        // Some pages in this family gate the form behind a differently-
+        // labeled verify button with no Turnstile-style token to wait for
+        // at all — safe to click as soon as it's visible AND already
+        // enabled on its own (never force-enable — see above for why
+        // that's actively harmful, not just unnecessary, on this template).
+        if (!window.__clickedHuman) {
+          const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
+          for (const btn of buttons) {
+            const text = (btn.textContent || btn.value || '').toLowerCase().trim();
+            const cls = (btn.className || '').toLowerCase();
+            const looksLikeVerify = text.includes('human') || text.includes('continue') || text.includes('verify') ||
+                                     text.includes('not a robot') || cls.includes('captcha');
+            // NOT offsetParent !== null — confirmed live that's unreliable
+            // here: offsetParent reads null for position:fixed elements in
+            // most browsers even when they're genuinely visible on screen,
+            // and this exact class of "click to verify" widget commonly
+            // uses fixed positioning. getBoundingClientRect + computed
+            // style is what actually reflects whether it's on screen.
+            const rect = btn.getBoundingClientRect();
+            const style = window.getComputedStyle(btn);
+            const isVisible = rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+            if (looksLikeVerify && isVisible && !btn.disabled) {
+              console.log('[pahe-auto] [oii.la] Page 1: Clicking verification button: ' + text);
+              btn.click();
+              window.__clickedHuman = true;
+              window.__humanClickedAt = Date.now();
+              return;
+            }
+          }
+          // Bug fixed live: setting __clickedHuman=true here unconditionally
+          // (whether or not a button was actually found) meant that if the
+          // button hadn't rendered yet on this tick, the click was silently
+          // skipped forever and the very next check fell straight through
+          // to submitting the form unclicked — every single time, since
+          // __clickedHuman was already (wrongly) marked done. Retry finding
+          // the button for a few ticks (runs every 500ms) before concluding
+          // there's genuinely nothing to click (as opposed to "found but
+          // disabled", handled by the early return above).
+          window.__humanClickAttempts = (window.__humanClickAttempts || 0) + 1;
+          if (window.__humanClickAttempts < 8) return;
+          window.__clickedHuman = true; // gave up looking — proceed as if there's nothing to click
+        }
+
+        // Confirmed live: clicking the verify button and submitting on the
+        // very next 500ms tick still got bounced — the click likely fires
+        // an async verification call server-side that hadn't finished yet.
+        // Give it real wall-clock time to land before ever submitting.
+        const sinceClick = window.__humanClickedAt ? Date.now() - window.__humanClickedAt : Infinity;
+        if (sinceClick < 2500) return;
+
         const isSolved = isCaptchaSolved();
         const hasCaptchaWidget = document.querySelector('.g-recaptcha, .h-captcha, .cf-turnstile, iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"]');
 
@@ -105,22 +183,6 @@
           setTimeout(() => {
             formSubmit(captchaForm);
           }, 500);
-        } else {
-          // If captcha widget is present but not solved yet, click verification button ONCE
-          if (!window.__clickedHuman) {
-            const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
-            for (const btn of buttons) {
-              const text = (btn.textContent || btn.value || '').toLowerCase().trim();
-              if ((text.includes('human') || text.includes('continue') || text.includes('verify') || text.includes('not a robot')) &&
-                  btn.offsetParent !== null && !btn.disabled) {
-                window.__clickedHuman = true;
-                console.log('[pahe-auto] [oii.la] Page 1: Clicking verification button: ' + text);
-                btn.removeAttribute('disabled');
-                btn.click();
-                break;
-              }
-            }
-          }
         }
       }
     } catch (err) {

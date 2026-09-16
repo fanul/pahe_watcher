@@ -62,6 +62,12 @@
     "sheetId": "",
     "tab": "Downloads"
   },
+  "driveBackup": {
+    "folderId": "",
+    "oauthClientId": "",
+    "oauthClientSecret": "",
+    "oauthRefreshToken": ""
+  },
   "jdownloader": {
     "email": "",
     "password": "",

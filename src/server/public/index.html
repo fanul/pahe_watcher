@@ -560,6 +560,37 @@
             <button type="button" id="btnImportBackup" class="btn ghost" style="padding: 4px 10px; font-size: 11px; height: auto;">⬆ Import .zip</button>
             <span id="backupStatus" class="muted small"></span>
           </div>
+
+          <div class="muted small" style="margin-top: 14px; margin-bottom: 8px; border-top: 1px solid var(--border); padding-top: 12px;">
+            Optional: same backup, stored on Google Drive instead of a manual download. Uses OAuth2 with your own
+            Google account (NOT a service account — service accounts have no storage quota of their own and can't
+            create files in a regular Drive folder). Set up an OAuth client in Google Cloud Console → APIs &amp;
+            Services → Credentials → Create Credentials → OAuth client ID → "Web application", with an Authorized
+            redirect URI of <code id="driveOauthRedirectHint">http://this-app's-host:port/oauth/drive/callback</code>,
+            paste the Client ID/Secret below, then click Connect.
+          </div>
+          <label>OAuth Client ID
+            <input name="driveBackupOauthClientId" type="text" placeholder="123456789-abc.apps.googleusercontent.com" />
+          </label>
+          <label>OAuth Client Secret
+            <input name="driveBackupOauthClientSecret" type="password" placeholder="GOCSPX-..." />
+          </label>
+          <div style="display: flex; gap: 8px; align-items: center; margin: 8px 0;">
+            <button type="button" id="btnConnectDriveBackup" class="btn ghost" style="padding: 4px 10px; font-size: 11px; height: auto;">🔗 Connect Google Drive</button>
+            <span class="muted small">Status: <span id="driveBackupConnectedInfo"></span></span>
+          </div>
+          <label>Drive Folder ID <span class="muted small">(from the folder's URL: drive.google.com/drive/folders/&lt;this&gt;)</span>
+            <input name="driveBackupFolderId" type="text" placeholder="1AbCdEfGhIjKlMnOpQrStUvWxYz" />
+          </label>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px;">
+            <button type="button" id="btnTestDriveBackup" class="btn ghost" style="padding: 4px 10px; font-size: 11px; height: auto;">Test Connection</button>
+            <button type="button" id="btnUploadDriveBackup" class="btn ghost" style="padding: 4px 10px; font-size: 11px; height: auto;">⬆ Upload to Drive</button>
+            <select id="driveBackupList" style="padding: 4px 8px; font-size: 11px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+              <option value="">Loading backups…</option>
+            </select>
+            <button type="button" id="btnRestoreDriveBackup" class="btn ghost danger-btn" style="padding: 4px 10px; font-size: 11px; height: auto;">⬇ Restore selected</button>
+          </div>
+          <div class="muted small" id="driveBackupStatus" style="margin-top: 6px;"></div>
         </fieldset>
       </div>
 

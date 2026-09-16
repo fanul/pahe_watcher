@@ -84,6 +84,28 @@ export class JDownloaderClient {
     log.info('Pushed link to JDownloader', { url, packageName });
   }
 
+  /**
+   * Current status of every package in the device's download list (moved
+   * there automatically once autostart picks a crawled link up) — used to
+   * track a pushed job's real download progress, not just whether the push
+   * itself succeeded. `saveTo` is JDownloader's actual on-disk destination
+   * path for that package, when the API is willing to report it.
+   */
+  async listDownloadPackages() {
+    const client = await this._connect();
+    const deviceId = await this._resolveDeviceId();
+    return client.downloadsV2.queryPackages(deviceId, undefined, {
+      name: true,
+      status: true,
+      bytesLoaded: true,
+      bytesTotal: true,
+      saveTo: true,
+      finished: true,
+      running: true,
+      enabled: true,
+    });
+  }
+
   /** Lightweight connectivity check for the GUI status panel. */
   async testConnection() {
     if (!this.enabled) return { ok: false, reason: 'not-configured' };

@@ -5,6 +5,8 @@ import { Watcher } from './watcher/watcher.js';
 import { JobQueue } from './queue/jobQueue.js';
 import { SheetsClient } from './sheets/sheetsClient.js';
 import { JDownloaderClient } from './jdownloader/jdownloaderClient.js';
+import { startJdownloaderMonitor } from './jdownloader/downloadMonitor.js';
+import { DriveBackupClient } from './drive/driveBackupClient.js';
 import { BypassEngine } from './bypass/index.js';
 import { bus } from './core/eventBus.js';
 import {
@@ -44,13 +46,20 @@ export async function createApp() {
     autostart: runtime.jdownloader.autostart,
   });
 
+  const driveBackup = new DriveBackupClient({
+    clientId: runtime.driveBackup.oauthClientId,
+    clientSecret: runtime.driveBackup.oauthClientSecret,
+    refreshToken: runtime.driveBackup.oauthRefreshToken,
+    folderId: runtime.driveBackup.folderId,
+  });
+
   const queue = new JobQueue({
     store,
     concurrency: runtime.bypass.concurrency,
     maxRetries: runtime.bypass.maxRetries,
   });
 
-  const bypass = new BypassEngine({ config: runtime });
+  const bypass = new BypassEngine({ config: runtime, store });
 
   const watcher = new Watcher({ config: runtime, store, queue });
 
@@ -114,25 +123,29 @@ export async function createApp() {
     return row;
   });
 
+  const jdownloaderMonitor = startJdownloaderMonitor({ jdownloader, store });
+
   const app = {
     runtime,
     store,
     sheets,
     jdownloader,
+    driveBackup,
     queue,
     bypass,
     watcher,
 
     getPublicConfig() {
-      return getPublicConfig(runtime, sheets, jdownloader);
+      return getPublicConfig(runtime, sheets, jdownloader, driveBackup);
     },
 
     async updateConfig(patch) {
-      return await updateConfig(runtime, store, sheets, bypass, watcher, patch, jdownloader);
+      return await updateConfig(runtime, store, sheets, bypass, watcher, patch, jdownloader, driveBackup);
     },
 
     async shutdown() {
       log.info('Shutting down…');
+      jdownloaderMonitor.stop();
       watcher.stop();
       await bypass.close().catch(() => {});
       await jdownloader.close().catch(() => {});

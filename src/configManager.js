@@ -23,6 +23,11 @@ import {
   mergeJdownloaderOverrides
 } from './config/jdownloader.js';
 import {
+  getPublicDriveBackupConfig,
+  applyDriveBackupOverrides,
+  mergeDriveBackupOverrides
+} from './config/driveBackup.js';
+import {
   getPublicSyncConfig,
   applySyncOverrides,
   mergeSyncOverrides
@@ -35,18 +40,19 @@ import {
 
 const log = createLogger('app:config');
 
-export function getPublicConfig(runtime, sheets, jdownloader) {
+export function getPublicConfig(runtime, sheets, jdownloader, driveBackup) {
   return {
     watcher: getPublicWatcherConfig(runtime),
     bypass: getPublicBypassConfig(runtime),
     sheets: getPublicSheetsConfig(runtime, sheets),
     jdownloader: getPublicJdownloaderConfig(runtime, jdownloader),
+    driveBackup: getPublicDriveBackupConfig(runtime, driveBackup),
     sync: getPublicSyncConfig(runtime),
     deadLinkReport: getPublicDeadLinkReportConfig(runtime),
   };
 }
 
-export async function updateConfig(runtime, store, sheets, bypass, watcher, patch, jdownloader) {
+export async function updateConfig(runtime, store, sheets, bypass, watcher, patch, jdownloader, driveBackup) {
   // Handle Sheets Key file creation/removal
   handleSheetsKeyFile(runtime, patch, log);
 
@@ -75,6 +81,15 @@ export async function updateConfig(runtime, store, sheets, bypass, watcher, patc
     jdownloader.deviceName = runtime.jdownloader.deviceName;
     jdownloader.autostart = runtime.jdownloader.autostart;
     await jdownloader.close().catch(() => {});
+  }
+
+  // Reload Drive backup client fields — force a fresh client next use
+  if (patch?.driveBackup && driveBackup) {
+    driveBackup.folderId = runtime.driveBackup.folderId;
+    driveBackup.clientId = runtime.driveBackup.oauthClientId;
+    driveBackup.clientSecret = runtime.driveBackup.oauthClientSecret;
+    driveBackup.refreshToken = runtime.driveBackup.oauthRefreshToken;
+    driveBackup.drive = null;
   }
 
   // Restart Browser if bypass settings changed
@@ -114,7 +129,7 @@ export async function updateConfig(runtime, store, sheets, bypass, watcher, patc
   }
 
   log.info('Runtime config updated', patch);
-  return getPublicConfig(runtime, sheets, jdownloader);
+  return getPublicConfig(runtime, sheets, jdownloader, driveBackup);
 }
 
 export function applyOverrides(runtime, patch) {
@@ -122,6 +137,7 @@ export function applyOverrides(runtime, patch) {
   applyBypassOverrides(runtime, patch);
   applySheetsOverrides(runtime, patch);
   applyJdownloaderOverrides(runtime, patch);
+  applyDriveBackupOverrides(runtime, patch);
   applySyncOverrides(runtime, patch);
   applyDeadLinkReportOverrides(runtime, patch);
   return runtime;
@@ -133,6 +149,7 @@ export function mergeOverrides(existing, patch) {
     bypass: mergeBypassOverrides(existing, patch),
     sheets: mergeSheetsOverrides(existing, patch),
     jdownloader: mergeJdownloaderOverrides(existing, patch),
+    driveBackup: mergeDriveBackupOverrides(existing, patch),
     sync: mergeSyncOverrides(existing, patch),
     deadLinkReport: mergeDeadLinkReportOverrides(existing, patch),
   };

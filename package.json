@@ -10,6 +10,7 @@
     "pahe-watcher": "src/index.js"
   },
   "scripts": {
+    "prestart": "node scripts/kill-port.js",
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "server": "node src/index.js --server-only",

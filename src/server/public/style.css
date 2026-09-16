@@ -712,6 +712,18 @@ body {
 .job-status.cancelled { background: rgba(55, 65, 81, 0.15); color: var(--muted); border: 1px solid rgba(55, 65, 81, 0.25); }
 .job-status.dead { background: rgba(220, 38, 38, 0.15); color: #ef4444; border: 1px solid rgba(220, 38, 38, 0.35); }
 
+/* Finished-downloading-in-JDownloader badge — distinct golden glow so it reads at a glance from the rest of the pill colors. */
+.job-status.jdownloader-finished {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.22), rgba(255, 179, 0, 0.14));
+  color: #ffd700;
+  border: 1px solid rgba(255, 215, 0, 0.55);
+  animation: jdownloader-glow 2.2s ease-in-out infinite;
+}
+@keyframes jdownloader-glow {
+  0%, 100% { box-shadow: 0 0 3px rgba(255, 215, 0, 0.25); }
+  50% { box-shadow: 0 0 9px rgba(255, 215, 0, 0.65); }
+}
+
 .joblog {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 11px;

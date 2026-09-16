@@ -84,8 +84,9 @@ export function resolveHeadless(config) {
 }
 
 export class BypassEngine {
-  constructor({ config }) {
+  constructor({ config, store }) {
     this.config = config;
+    this.store = store;
     const headless = resolveHeadless(config);
     log.info(`Browser mode resolved: ${headless ? 'headless' : 'headful'} (browserMode=${config.bypass.browserMode}, captcha=${config.bypass.captcha?.provider})`);
     this.browser = new BrowserManager({
@@ -212,15 +213,26 @@ export class BypassEngine {
     };
     context.on('page', onPage);
 
+    // Resolved-shortlink cache (Store#getCachedDestination) — a prior
+    // resolve() of this exact entry URL may have already walked the whole ad
+    // chain. Only consulted on a fresh attempt (no checkpoint yet), since a
+    // checkpoint is a more precise, job-specific resume point already. If
+    // this cached start turns out stale (dead link, wall, timeout — anything
+    // that throws below), the catch block evicts it so the next attempt does
+    // a full fresh resolution instead of retrying the same bad shortcut.
+    const cachedDestination = !job.checkpointUrl ? this.store?.getCachedDestination(job.url) : null;
+    const usedCachedStart = Boolean(cachedDestination);
+
     try {
       // Resume from the last known-good hop if a previous attempt on this
       // same job got that far (see jobQueue.js's setCheckpoint) — skips
       // re-walking the whole chain, including intercelestial.com's flaky
-      // ad-gate, on every retry. Falls back to job.url if there's no
-      // checkpoint (first attempt) or the queue already cleared a stale one
-      // after a failed resume.
-      const startUrl = job.checkpointUrl || job.url;
-      ctx.log?.(`Starting: ${job.provider} ${job.quality || ''} — ${shorten(startUrl)}${job.checkpointUrl ? ' (resumed from checkpoint)' : ''}`);
+      // ad-gate, on every retry. Falls back to the shortlink cache, then to
+      // job.url if there's no checkpoint (first attempt) or the queue
+      // already cleared a stale one after a failed resume.
+      const startUrl = job.checkpointUrl || cachedDestination || job.url;
+      const startLabel = job.checkpointUrl ? ' (resumed from checkpoint)' : usedCachedStart ? ' (from cached destination)' : '';
+      ctx.log?.(`Starting: ${job.provider} ${job.quality || ''} — ${shorten(startUrl)}${startLabel}`);
       await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
 
       settled = await this._driveToFinal(activePages, ctx, timeoutMs, () => stuckLoopError);
@@ -238,7 +250,19 @@ export class BypassEngine {
       }
 
       ctx.log?.(`✔ Final link (${settled.linkType}): ${settled.finalUrl}`);
+      // Cache the entry URL -> final link so a later resolve() of the exact
+      // same shortlink (lost checkpoint, re-queued job, etc.) can skip
+      // straight to it. Refreshed on every success, including cache-hit
+      // runs, so a still-good cached link keeps its TTL alive.
+      this.store?.setCachedDestination(job.url, settled.finalUrl);
       return { ...settled, hops };
+    } catch (err) {
+      // The cached destination didn't actually pan out this time — evict it
+      // immediately rather than waiting out the TTL, so the job-queue's own
+      // retry gets a full fresh resolution instead of repeating the same
+      // stale shortcut.
+      if (usedCachedStart) this.store?.deleteCachedDestination(job.url);
+      throw err;
     } finally {
       this.activeJobs.delete(job.id);
       // Clean up context listeners and close all pages
@@ -441,6 +465,29 @@ export class BypassEngine {
           }
           return { finalUrl: url, linkType: classifyFinalLink(url) };
         }
+
+        // oii.la-family (oii.la, tpi.li, clksz.com, srnky.com) "#continue" /
+        // ".btn-captcha" button — confirmed live via a Node-side DOM dump
+        // that this is a single element serving two identities depending on
+        // page state: while genuinely disabled, its onclick is
+        // `window.open(adUrl)` (an ad decoy — clicking it just fires the
+        // ad); once the page's own script clears that onclick (~3s in), the
+        // element is a bare `type="submit"` button gated by a real
+        // Cloudflare Turnstile challenge (a hidden `cf-turnstile-response`/
+        // `visit_token` field that only gets a value once Turnstile actually
+        // passes). Force-removing `disabled` and clicking it early — what
+        // this handler and the injected script's fallback heuristic both
+        // used to do — submits the form before that token exists, which the
+        // server reads as an invalid/bot submission and bounces the job
+        // through an ad-redirect chain (hai8g.com → advertisingcamps.com →
+        // taboola.com) every time. There is no "trusted click" workaround
+        // for that — a real click on a still-gated button is just as
+        // premature as a synthetic one. This deliberately does NOT click:
+        // detectCaptcha()/this.captcha below is the right place to actually
+        // solve the Turnstile challenge blocking it (not yet recognized
+        // there — see the "widget not detected" note lower down); until
+        // then, a job stuck here should time out with a clear picture in
+        // the logs rather than force a submission that's confirmed harmful.
 
         // Node-side ouo.io automation fallback when userscript is disabled/restricted
         if (url && /ouo\.(io|press)/i.test(url)) {

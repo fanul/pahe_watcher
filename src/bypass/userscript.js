@@ -20,6 +20,19 @@ export const AD_HOSTS = [
   'old.pahe.plus',
   'oii.la',
   'uii.io',
+  // Confirmed live: same backend as oii.la — its landing page loads
+  // //oii.la/webroot/cloud_theme/build/js/script.loader.js directly, and
+  // serves the identical "cloud_theme" asset paths, form structure
+  // (form#form-continue, "Please click on below captcha box"), and Google
+  // AdSense-fetch-based "please disable Adblock" false-positive (see
+  // browser.js's adsbygoogle.js route fake — the fetch to
+  // pagead2.googlesyndication.com fails on networks that block Google ad
+  // domains, which this site's own script wrongly reads as "adblock is on"
+  // and hides the real captcha/Continue button behind a dead-end wall).
+  'clksz.com',
+  // Same family as clksz.com — confirmed live via identical cloud_theme
+  // asset paths and the same rvpaste728.png banner ad.
+  'srnky.com',
   'autoshieldd.com',
   'financeehelp.com',
   'cloudhostt.com',
@@ -189,6 +202,94 @@ export function getInjectedAutomationScript(config = {}) {
       window.ab = false;
     } catch {}
 
+    // Shadow-DOM-aware anti-adblock wall purge. removeAdOverlays/
+    // removeClickDecoyOverlays below only ever see the light DOM — some
+    // anti-adblock walls deliberately render their markup inside a shadow
+    // root specifically to dodge that kind of querySelector-based removal
+    // (a technique seen in community userscripts for this same ad-chain).
+    // Patching attachShadow lets us inspect shadow content the moment it's
+    // created and hide the host if it looks like one of these walls, before
+    // it ever paints. Runs via addInitScript (browser.js), i.e. before the
+    // page's own scripts, so this is installed ahead of any attachShadow
+    // call the page could make. Deliberately does NOT walk up and hide
+    // ancestor elements (unlike the reference implementation this was
+    // adapted from) — the existing removeAdOverlays/removeClickDecoyOverlays
+    // interval tick already clears the surrounding full-page backdrop
+    // wrapper on its own terms, so limiting this patch to "stop the shadow
+    // content from rendering" keeps the blast radius small.
+    try {
+      const nativeAttachShadow = Element.prototype.attachShadow;
+      const isCaptchaHost = (el) => {
+        try {
+          const attrStr = ((el.className || '') + ' ' + (el.id || '')).toLowerCase();
+          return attrStr.includes('captcha') || attrStr.includes('turnstile') || attrStr.includes('hcaptcha');
+        } catch { return false; }
+      };
+      Element.prototype.attachShadow = function (...args) {
+        const root = nativeAttachShadow.apply(this, args);
+        const host = this;
+        const inspect = () => {
+          try {
+            if (isCaptchaHost(host)) return;
+            const html = (root.innerHTML || '').toLowerCase();
+            if (
+              html.includes('antiadblock') ||
+              html.includes('disable your adblocker') ||
+              html.includes('adblocker detected') ||
+              html.includes('adblock detected') ||
+              html.includes('please disable your ad')
+            ) {
+              console.log('[pahe-auto] Shadow-DOM anti-adblock wall detected — hiding host element');
+              try { host.style.setProperty('display', 'none', 'important'); } catch {}
+              try { document.body && document.body.style.setProperty('overflow', 'auto', 'important'); } catch {}
+              try { document.documentElement && document.documentElement.style.setProperty('overflow', 'auto', 'important'); } catch {}
+            }
+          } catch {}
+        };
+        try {
+          const obs = new MutationObserver(inspect);
+          obs.observe(root, { childList: true, subtree: true });
+        } catch {}
+        setTimeout(inspect, 0);
+        return root;
+      };
+      console.log('[pahe-auto] Shadow-DOM anti-adblock guard installed');
+    } catch (err) {
+      console.error('[pahe-auto] Failed to install shadow-DOM anti-adblock guard: ' + err.message);
+    }
+
+    // innerHTML anti-adblock guard — a second, distinct anti-adblock-wall
+    // mechanism (confirmed in the same community reference implementation
+    // as the #continue fix above) that injects the wall's markup via a
+    // direct .innerHTML assignment rather than a shadow root. Drops any
+    // write containing "antiadblock" before it ever reaches the DOM;
+    // everything else passes through untouched. Installed once (module
+    // singleton guard), unconditionally, since the check itself is cheap
+    // and narrow.
+    try {
+      if (!window.__paheInnerHTMLGuardInstalled) {
+        window.__paheInnerHTMLGuardInstalled = true;
+        const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+        if (descriptor && descriptor.set) {
+          Object.defineProperty(Element.prototype, 'innerHTML', {
+            configurable: true,
+            enumerable: descriptor.enumerable,
+            get: descriptor.get,
+            set: function (v) {
+              if (typeof v === 'string' && v.toLowerCase().includes('antiadblock')) {
+                console.log('[pahe-auto] Blocked innerHTML write containing "antiadblock"');
+                return;
+              }
+              return descriptor.set.call(this, v);
+            },
+          });
+          console.log('[pahe-auto] innerHTML anti-adblock guard installed');
+        }
+      }
+    } catch (err) {
+      console.error('[pahe-auto] Failed to install innerHTML anti-adblock guard: ' + err.message);
+    }
+
     console.log('[pahe-auto] Injected on ' + window.location.href);
 
     // Helpers
@@ -204,6 +305,23 @@ export function getInjectedAutomationScript(config = {}) {
       return false;
     }
 
+    // Confirmed live (srnky.com): a form with an <input>/<button> named
+    // "submit" shadows HTMLFormElement's own .submit method with that
+    // element instead — form.submit() then throws "form.submit is not a
+    // function", silently, since every call site here was wrapped in a
+    // try/catch that itself called the same broken form.submit() again.
+    // The form never actually submitted; from the outside this looked
+    // exactly like a captcha/verification failure and bounced back to the
+    // shortener instead. HTMLFormElement.prototype.submit.call(form) always
+    // calls the real native method regardless of what's shadowing it.
+    function safeFormSubmit(form) {
+      try {
+        HTMLFormElement.prototype.submit.call(form);
+      } catch (err) {
+        console.error('[pahe-auto] safeFormSubmit failed: ' + err.message);
+      }
+    }
+
     function formSubmit(form) {
       try {
         const submitBtn = form.querySelector('[type="submit"], button:not([type])');
@@ -211,14 +329,12 @@ export function getInjectedAutomationScript(config = {}) {
           submitBtn.removeAttribute('disabled');
           submitBtn.click();
           // Fallback: submit form directly after 100ms
-          setTimeout(() => {
-            try { form.submit(); } catch {}
-          }, 100);
+          setTimeout(() => safeFormSubmit(form), 100);
         } else {
-          form.submit();
+          safeFormSubmit(form);
         }
       } catch {
-        form.submit();
+        safeFormSubmit(form);
       }
     }
 
@@ -252,6 +368,25 @@ export function getInjectedAutomationScript(config = {}) {
             if (el.querySelector('iframe')) return;
             const attrStr = ((el.className || '') + ' ' + (el.id || '')).toLowerCase();
             if (attrStr.includes('captcha') || attrStr.includes('turnstile')) return;
+            el.remove();
+          } catch {}
+        });
+        // Same decoy signature (fixed, INT32_MAX z-index, full-viewport) but
+        // as a bare <iframe> sitting directly on <html> instead of a div —
+        // confirmed live on srnky.com/clksz.com: a src-less iframe at
+        // z-index 2147483647 covers the whole page and intercepts every
+        // click, including on the real #continue button underneath it
+        // (which is why it kept staying disabled/unclicked no matter how
+        // long automation waited). A real captcha iframe (hCaptcha/
+        // reCAPTCHA/Turnstile) always has a src pointing at the provider's
+        // own domain — this decoy never does, which is what tells them
+        // apart here instead of the class/id-based exclusion used above.
+        document.querySelectorAll('iframe').forEach((el) => {
+          try {
+            const style = window.getComputedStyle(el);
+            if (style.position !== 'fixed' || parseInt(style.zIndex, 10) <= 2000000000) return;
+            if (el.getAttribute('src')) return;
+            console.log('[pahe-auto] Removed full-page click-decoy iframe (src-less, z-index ' + style.zIndex + ')');
             el.remove();
           } catch {}
         });
@@ -319,7 +454,9 @@ export function getInjectedAutomationScript(config = {}) {
       'ouo.io': (${ouoRule}),
       'ouo.press': (${ouoRule}),
       'oii.la': (${oiilaRule}),
-      'tpi.li': (${oiilaRule})
+      'tpi.li': (${oiilaRule}),
+      'clksz.com': (${oiilaRule}),
+      'srnky.com': (${oiilaRule})
     };
 
     const getActiveRule = () => {

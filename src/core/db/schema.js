@@ -87,6 +87,15 @@ CREATE TABLE IF NOT EXISTS post_embeddings (
   embedding    BLOB,
   embedded_at  TEXT
 );
+
+-- Resolved-shortlink cache: entry URL (job.url) -> last known-good final
+-- link, so re-resolving the exact same entry link (checkpoint lost, job
+-- re-queued, etc.) can skip the whole ad chain. See bypass/index.js.
+CREATE TABLE IF NOT EXISTS shortlink_cache (
+  source_url       TEXT PRIMARY KEY,
+  destination_url  TEXT NOT NULL,
+  resolved_at      TEXT NOT NULL
+);
 `;
 
 /**
