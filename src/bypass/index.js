@@ -8,6 +8,7 @@ import { isAntiAutomationWallPage } from './antiAutomationWall.js';
 import { resolveLLAdGate, isLLAdGateUrl } from './resolvers/llAdGate.js';
 import { AD_HOSTS } from './userscript.js';
 import { restoreWindow } from './windowControl.js';
+import { isWorkerCacheOriginUrl, checkWorkerCache, saveToWorkerCache } from './shortlinkWorkerCache.js';
 
 const log = createLogger('bypass');
 
@@ -220,8 +221,14 @@ export class BypassEngine {
     // this cached start turns out stale (dead link, wall, timeout — anything
     // that throws below), the catch block evicts it so the next attempt does
     // a full fresh resolution instead of retrying the same bad shortcut.
-    const cachedDestination = !job.checkpointUrl ? this.store?.getCachedDestination(job.url) : null;
-    const usedCachedStart = Boolean(cachedDestination);
+    let cachedDestination = !job.checkpointUrl ? this.store?.getCachedDestination(job.url) : null;
+    let usedCachedStart = Boolean(cachedDestination);
+    // Set once we know where the entry link actually redirects to (see the
+    // worker-cache lookup below) — the URL saveToWorkerCache() should key
+    // its contribution under, since that's how the community cache itself
+    // is keyed (job.url may be a same-path-redirecting entry link like
+    // tpi.li/<slug>, not the clone-domain URL that redirect lands on).
+    let workerCacheKeyUrl = null;
 
     try {
       // Resume from the last known-good hop if a previous attempt on this
@@ -234,6 +241,30 @@ export class BypassEngine {
       const startLabel = job.checkpointUrl ? ' (resumed from checkpoint)' : usedCachedStart ? ' (from cached destination)' : '';
       ctx.log?.(`Starting: ${job.provider} ${job.quality || ''} — ${shorten(startUrl)}${startLabel}`);
       await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+
+      // Community Worker cache (shortlinkWorkerCache.js) — checked against
+      // where we actually LANDED, not job.url itself: entry links like
+      // tpi.li/<slug> same-path-redirect to the oii.la-family clone domain
+      // (srnky.com/<slug>, clksz.com/<slug>, …) that actually hosts the
+      // gate, and the community cache is keyed by that post-redirect URL,
+      // not the tpi.li entry link. Confirmed live this session: the cache
+      // already had the correct destination for a shortlink we were
+      // independently stuck behind a Turnstile challenge on, contributed by
+      // other users of the reference userscript this was adapted from.
+      // Only tried on a fresh attempt with no local-cache hit already.
+      if (!usedCachedStart && !job.checkpointUrl) {
+        const landedUrl = page.url();
+        if (isWorkerCacheOriginUrl(landedUrl)) {
+          workerCacheKeyUrl = landedUrl;
+          const workerDestination = await checkWorkerCache(landedUrl);
+          if (workerDestination) {
+            ctx.log?.(`Found destination in community shortlink cache: ${shorten(workerDestination)}`);
+            cachedDestination = workerDestination;
+            usedCachedStart = true;
+            await page.goto(workerDestination, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+          }
+        }
+      }
 
       settled = await this._driveToFinal(activePages, ctx, timeoutMs, () => stuckLoopError);
       if (!settled) throw new Error('Timed out before reaching a final link');
@@ -255,6 +286,18 @@ export class BypassEngine {
       // straight to it. Refreshed on every success, including cache-hit
       // runs, so a still-good cached link keeps its TTL alive.
       this.store?.setCachedDestination(job.url, settled.finalUrl);
+      // Contribute back to the community cache too, same as the reference
+      // userscript's own listenerNavigation() — best-effort, never awaited
+      // (a slow/unreachable Worker shouldn't delay returning an already-
+      // successful result), and shortlinkWorkerCache.js never throws. Keyed
+      // under whichever origin-domain URL we actually landed on (set above
+      // when checking the cache), not job.url — matches how the community
+      // cache itself is keyed. Skipped when we started FROM a cached
+      // destination (nothing new to contribute) or never reached this
+      // family of hosts at all.
+      if (workerCacheKeyUrl && !job.checkpointUrl && cachedDestination !== settled.finalUrl) {
+        saveToWorkerCache(workerCacheKeyUrl, settled.finalUrl);
+      }
       return { ...settled, hops };
     } catch (err) {
       // The cached destination didn't actually pan out this time — evict it
