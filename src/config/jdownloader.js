@@ -4,6 +4,7 @@ export function getPublicJdownloaderConfig(runtime, jdownloader) {
     password: runtime.jdownloader.password,
     deviceName: runtime.jdownloader.deviceName,
     autostart: runtime.jdownloader.autostart,
+    downloadFolder: runtime.jdownloader.downloadFolder,
     configured: jdownloader.enabled,
   };
 }

@@ -3,6 +3,7 @@ export function populateJdownloaderSettings(form, cfg) {
   form.jdownloaderPassword.value = cfg.jdownloader.password || '';
   form.jdownloaderDeviceName.value = cfg.jdownloader.deviceName || '';
   form.jdownloaderAutostart.checked = cfg.jdownloader.autostart !== false;
+  form.jdownloaderDownloadFolder.value = cfg.jdownloader.downloadFolder || '';
 }
 
 export function serializeJdownloaderSettings(form) {
@@ -11,5 +12,6 @@ export function serializeJdownloaderSettings(form) {
     password: form.jdownloaderPassword.value,
     deviceName: form.jdownloaderDeviceName.value,
     autostart: form.jdownloaderAutostart.checked,
+    downloadFolder: form.jdownloaderDownloadFolder.value,
   };
 }

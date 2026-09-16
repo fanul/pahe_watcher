@@ -74,14 +74,20 @@ export class JDownloaderClient {
   }
 
   /** Push a single resolved link into JDownloader's linkgrabber. */
-  async addLink(url, { packageName } = {}) {
+  async addLink(url, { packageName, destinationFolder } = {}) {
     const client = await this._connect();
     const deviceId = await this._resolveDeviceId();
     await client.linkgrabberV2.addLinks(deviceId, [url], {
       autostart: this.autostart,
       packageName,
+      // myjdownloader's addLinks merges whatever options object it's given
+      // straight into the /linkgrabberv2/addLinks request body — undefined
+      // here just omits the key entirely (JSON.stringify drops undefined
+      // values), which is JDownloader's own signal to use its configured
+      // default download folder instead of overriding it.
+      ...(destinationFolder ? { destinationFolder } : {}),
     });
-    log.info('Pushed link to JDownloader', { url, packageName });
+    log.info('Pushed link to JDownloader', { url, packageName, destinationFolder });
   }
 
   /**
@@ -94,7 +100,7 @@ export class JDownloaderClient {
   async listDownloadPackages() {
     const client = await this._connect();
     const deviceId = await this._resolveDeviceId();
-    return client.downloadsV2.queryPackages(deviceId, undefined, {
+    const raw = await client.downloadsV2.queryPackages(deviceId, undefined, {
       name: true,
       status: true,
       bytesLoaded: true,
@@ -104,6 +110,14 @@ export class JDownloaderClient {
       running: true,
       enabled: true,
     });
+    // myjdownloader's namespace methods (unlike listDevices()) return the
+    // raw My.JDownloader API envelope unwrapped — the actual package list
+    // is under .data, not the top-level return value itself. Confirmed
+    // live: this was silently throwing "packages.find is not a function"
+    // on every single poll since the monitor was added, since `raw` here
+    // is `{data: [...], id, rid}`, not an array — the whole download-
+    // progress-streaming feature was dead on arrival until this unwrap.
+    return Array.isArray(raw) ? raw : raw?.data || [];
   }
 
   /** Lightweight connectivity check for the GUI status panel. */

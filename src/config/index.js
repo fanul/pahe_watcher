@@ -103,6 +103,10 @@ export function loadConfig() {
       password: envStr('JDOWNLOADER_PASSWORD', d.jdownloader?.password || ''),
       deviceName: envStr('JDOWNLOADER_DEVICE_NAME', d.jdownloader?.deviceName || ''),
       autostart: envStr('JDOWNLOADER_AUTOSTART', String(d.jdownloader?.autostart ?? true)) !== 'false',
+      // JDownloader-side path (not a path on this machine) — blank uses
+      // whatever JDownloader's own default download directory is configured
+      // to be.
+      downloadFolder: envStr('JDOWNLOADER_DOWNLOAD_FOLDER', d.jdownloader?.downloadFolder || ''),
     },
     sheets: {
       serviceAccountKey: path.resolve(ROOT, envStr('GOOGLE_SERVICE_ACCOUNT_KEY', d.sheets.serviceAccountKey)),

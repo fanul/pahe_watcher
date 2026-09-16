@@ -109,7 +109,10 @@ export async function createApp() {
     row.jdownloaderPushed = null;
     if (jdownloader.enabled) {
       try {
-        await jdownloader.addLink(row.finalUrl, { packageName: job.title });
+        await jdownloader.addLink(row.finalUrl, {
+          packageName: job.title,
+          destinationFolder: runtime.jdownloader.downloadFolder || undefined,
+        });
         row.jdownloaderPushed = true;
         ctx.log?.('Pushed to JDownloader.');
       } catch (err) {

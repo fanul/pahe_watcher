@@ -72,7 +72,8 @@
     "email": "",
     "password": "",
     "deviceName": "",
-    "autostart": true
+    "autostart": true,
+    "downloadFolder": ""
   },
   "sync": {
     "backfillBatchSize": 5,
