@@ -34,7 +34,7 @@ const randomDelay = (minMs, maxMs) => minMs + Math.random() * (maxMs - minMs);
 // construction, no enumeration needed. Shared between readButtonState's
 // target selection and findClickableInstance's final click-time scan so
 // neither can land on anything outside this set, at either step.
-const REAL_BUTTON_TEXT_PATTERN = 'continue|generate link|get verified link|verified link|click to verify';
+const REAL_BUTTON_TEXT_PATTERN = 'continue|generate link|get link|get verified link|verified link|click to verify';
 
 // Deliberately NOT awaited by callers — closing a real Chrome process and
 // recursively deleting its profile directory (cache, cookie DB, etc.) is
@@ -82,14 +82,25 @@ async function readButtonState(page) {
       // confirmed-legitimate label can ever be targetIndex, not "anything
       // except a few known-bad ones".
       const targetIndex = buttons.findIndex((b) => isRealLabel(b.text));
+      // Reported live: the robot honeypot still got clicked even after the
+      // .myButton allowlist landed — because #wb never went through it at
+      // all. "It's a unique id selector" was wrongly treated as "therefore
+      // safe": uniqueness only means there's one element with that id, not
+      // that the site can't (temporarily, or as a trap) give the honeypot
+      // that same id. #wb now has to pass the exact same allowlist check
+      // as every .myButton instance — no more assumed-safe-by-construction
+      // selector anywhere in this resolver.
+      const wbEl = document.getElementById('wb');
+      const wbText = wbEl ? (wbEl.textContent || '').trim() : '';
       return {
-        hasWb: !!document.getElementById('wb'),
+        hasWb: !!wbEl && isRealLabel(wbText),
         hasMyButton: buttons.length > 0,
         targetIndex,
         targetVisible: targetIndex >= 0 ? buttons[targetIndex].visible : false,
         hasScrollButton: buttons.some((b) => /scroll/i.test(b.text)),
         buttonCount: buttons.length,
         scrollY: Math.round(window.scrollY),
+        wbText,
         buttonsSummary: buttons.map((b, i) => `${i}:"${b.text.slice(0, 20)}"${b.visible ? '(vis)' : ''}@${b.top}`).join(', '),
         // Real hCaptcha/reCAPTCHA/Turnstile iframes always carry a src on
         // the provider's own domain — if a button-like element only ever
@@ -102,7 +113,7 @@ async function readButtonState(page) {
     }, REAL_BUTTON_TEXT_PATTERN)
     .catch(() => ({
       hasWb: false, hasMyButton: false, targetIndex: -1, targetVisible: false, hasScrollButton: false,
-      buttonCount: 0, scrollY: -1, buttonsSummary: '', iframeCount: -1,
+      buttonCount: 0, scrollY: -1, wbText: '', buttonsSummary: '', iframeCount: -1,
     }));
 }
 
@@ -376,7 +387,7 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       if (buttonState.buttonCount !== lastLoggedButtonCount) {
         lastLoggedButtonCount = buttonState.buttonCount;
         ctx.log?.(
-          `[llGate][diag] .myButton count=${buttonState.buttonCount} iframes=${buttonState.iframeCount} scrollY=${buttonState.scrollY} targetIndex=${buttonState.targetIndex} targetVisible=${buttonState.targetVisible} → [${buttonState.buttonsSummary}]`,
+          `[llGate][diag] .myButton count=${buttonState.buttonCount} iframes=${buttonState.iframeCount} scrollY=${buttonState.scrollY} targetIndex=${buttonState.targetIndex} targetVisible=${buttonState.targetVisible} wb="${buttonState.wbText}"(allowed=${buttonState.hasWb}) → [${buttonState.buttonsSummary}]`,
         );
       }
 
@@ -426,11 +437,12 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       const sel = buttonState.hasWb ? '#wb' : (buttonState.hasMyButton ? '.myButton' : null);
       if (sel) {
         ctx.log?.(`[llGate] Waiting for ${sel} to clear (cursor genuinely a hand, not just present in the DOM)…`);
-        // #wb is a unique id selector (no decoy-text ambiguity possible);
-        // .myButton can match multiple instances including a honeypot
-        // (see REAL_BUTTON_TEXT_PATTERN), so only that path needs the
-        // allowlist filter.
-        const clicked = await clickWhenClear(page, ctx, sel, deadline, sel === '.myButton' ? REAL_BUTTON_TEXT_PATTERN : undefined);
+        // Always pass the allowlist, #wb included — "it's a unique id
+        // selector" turned out NOT to mean "therefore safe" (see
+        // REAL_BUTTON_TEXT_PATTERN's comment on readButtonState's hasWb
+        // check above); defense in depth in case the element's text
+        // changes between that check and this actual click.
+        const clicked = await clickWhenClear(page, ctx, sel, deadline, REAL_BUTTON_TEXT_PATTERN);
         ctx.log?.(`[llGate] ${sel} ${clicked ? 'clicked' : 'never cleared before deadline — moving on'}`);
         // A little breathing room after a real click before checking again —
         // matches how a human actually interacts (not back-to-back at a
