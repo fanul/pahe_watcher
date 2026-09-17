@@ -73,19 +73,44 @@ export class JDownloaderClient {
     return this._deviceId;
   }
 
+  /**
+   * Once connected, this._client/this._deviceId are cached for the life of
+   * this object — if the underlying My.JDownloader session goes stale
+   * (device reconnects with a new session server-side, token expires,
+   * etc.), every subsequent call kept hitting that same broken cached
+   * session and failing forever until the whole app restarted. Confirmed
+   * live: the failure mode isn't even a clean "unauthorized" — myjdownloader
+   * tries to AES-decrypt whatever the server sent back regardless of
+   * whether it's actually valid ciphertext, so a stale session surfaces as
+   * a cryptic aes-js "invalid ciphertext size" error instead. Reset and
+   * retry once with a fresh connection before actually giving up.
+   */
+  async _withReconnect(fn) {
+    try {
+      return await fn();
+    } catch (err) {
+      log.warn(`JDownloader call failed, reconnecting and retrying once: ${err.message}`);
+      this._client = null;
+      this._deviceId = null;
+      return fn();
+    }
+  }
+
   /** Push a single resolved link into JDownloader's linkgrabber. */
   async addLink(url, { packageName, destinationFolder } = {}) {
-    const client = await this._connect();
-    const deviceId = await this._resolveDeviceId();
-    await client.linkgrabberV2.addLinks(deviceId, [url], {
-      autostart: this.autostart,
-      packageName,
-      // myjdownloader's addLinks merges whatever options object it's given
-      // straight into the /linkgrabberv2/addLinks request body — undefined
-      // here just omits the key entirely (JSON.stringify drops undefined
-      // values), which is JDownloader's own signal to use its configured
-      // default download folder instead of overriding it.
-      ...(destinationFolder ? { destinationFolder } : {}),
+    await this._withReconnect(async () => {
+      const client = await this._connect();
+      const deviceId = await this._resolveDeviceId();
+      await client.linkgrabberV2.addLinks(deviceId, [url], {
+        autostart: this.autostart,
+        packageName,
+        // myjdownloader's addLinks merges whatever options object it's given
+        // straight into the /linkgrabberv2/addLinks request body — undefined
+        // here just omits the key entirely (JSON.stringify drops undefined
+        // values), which is JDownloader's own signal to use its configured
+        // default download folder instead of overriding it.
+        ...(destinationFolder ? { destinationFolder } : {}),
+      });
     });
     log.info('Pushed link to JDownloader', { url, packageName, destinationFolder });
   }
@@ -98,26 +123,28 @@ export class JDownloaderClient {
    * path for that package, when the API is willing to report it.
    */
   async listDownloadPackages() {
-    const client = await this._connect();
-    const deviceId = await this._resolveDeviceId();
-    const raw = await client.downloadsV2.queryPackages(deviceId, undefined, {
-      name: true,
-      status: true,
-      bytesLoaded: true,
-      bytesTotal: true,
-      saveTo: true,
-      finished: true,
-      running: true,
-      enabled: true,
+    return this._withReconnect(async () => {
+      const client = await this._connect();
+      const deviceId = await this._resolveDeviceId();
+      const raw = await client.downloadsV2.queryPackages(deviceId, undefined, {
+        name: true,
+        status: true,
+        bytesLoaded: true,
+        bytesTotal: true,
+        saveTo: true,
+        finished: true,
+        running: true,
+        enabled: true,
+      });
+      // myjdownloader's namespace methods (unlike listDevices()) return the
+      // raw My.JDownloader API envelope unwrapped — the actual package list
+      // is under .data, not the top-level return value itself. Confirmed
+      // live: this was silently throwing "packages.find is not a function"
+      // on every single poll since the monitor was added, since `raw` here
+      // is `{data: [...], id, rid}`, not an array — the whole download-
+      // progress-streaming feature was dead on arrival until this unwrap.
+      return Array.isArray(raw) ? raw : raw?.data || [];
     });
-    // myjdownloader's namespace methods (unlike listDevices()) return the
-    // raw My.JDownloader API envelope unwrapped — the actual package list
-    // is under .data, not the top-level return value itself. Confirmed
-    // live: this was silently throwing "packages.find is not a function"
-    // on every single poll since the monitor was added, since `raw` here
-    // is `{data: [...], id, rid}`, not an array — the whole download-
-    // progress-streaming feature was dead on arrival until this unwrap.
-    return Array.isArray(raw) ? raw : raw?.data || [];
   }
 
   /** Lightweight connectivity check for the GUI status panel. */
