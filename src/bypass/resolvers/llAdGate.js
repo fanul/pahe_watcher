@@ -359,13 +359,17 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
     // the same way a minimized one did.
     await page.bringToFront().catch(() => {});
 
-    // Requested despite the acknowledged risk above — genuinely minimizes
-    // the OS window (via CDP, see windowControl.js) right after the brief
-    // visible moment above, rather than never showing it at all. The A/B
-    // test's failure mode was triggered by the window being minimized
-    // during the actual click/scroll work below, which this still does —
-    // this is not expected to avoid that regression, only to delay it by
-    // however long this one tick takes.
+    // Requested: stay visible for a real 5s window before minimizing,
+    // instead of minimizing on the very next tick — gives the page's own
+    // initial setup/detection checks (the site's bot-gate and early
+    // decoy-clearing logic both appear to run right at load, per
+    // INTERCELESTIAL_ISSUES.md's engine-probe timings, mostly under 3.5s)
+    // real wall-clock time to run with Page Visibility active, before the
+    // window goes down for the rest of the click/scroll work. Still
+    // genuinely minimizes after that (via CDP, see windowControl.js) —
+    // the acknowledged A/B-test risk isn't gone, just deferred past the
+    // page's own startup window instead of applying immediately.
+    await page.waitForTimeout(5000);
     await minimizeWindow(page);
 
     // Every .myButton click reliably pop-unders a new tab (this template's
