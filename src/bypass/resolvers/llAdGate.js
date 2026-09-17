@@ -21,6 +21,17 @@ export function isLLAdGateUrl(url) {
 
 const randomDelay = (minMs, maxMs) => minMs + Math.random() * (maxMs - minMs);
 
+// Reported live: an "I'm not a robot"-labeled .myButton sitting next to
+// the real "Continue"/"Get Verified Link" target got clicked instead —
+// the reference project's own reverse-engineered notes on this exact
+// gate (INTERCELESTIAL_ISSUES.md's "honeypot" section) describe
+// deliberately-placed trap buttons, styled to blend in with the real
+// ones, that directly flag the session the instant they're clicked.
+// Shared between readButtonState's target selection and
+// findClickableInstance's final click-time scan so neither one can land
+// on this text pattern, at either step.
+const DECOY_BUTTON_TEXT_PATTERN = 'scroll|robot|captcha';
+
 // Deliberately NOT awaited by callers — closing a real Chrome process and
 // recursively deleting its profile directory (cache, cookie DB, etc.) is
 // genuinely slow (can run into multiple seconds, worse on Windows), and
@@ -48,7 +59,8 @@ function cleanupInBackground(browser, profileDir) {
  */
 async function readButtonState(page) {
   return page
-    .evaluate(() => {
+    .evaluate((decoyPattern) => {
+      const isDecoyLabel = (text) => new RegExp(decoyPattern, 'i').test(text);
       const buttons = Array.from(document.querySelectorAll('.myButton')).map((el) => {
         const rect = el.getBoundingClientRect();
         return {
@@ -62,7 +74,10 @@ async function readButtonState(page) {
           top: Math.round(rect.top),
         };
       });
-      const targetIndex = buttons.findIndex((b) => b.text && !/scroll/i.test(b.text));
+      // See DECOY_BUTTON_TEXT_PATTERN's own comment above — excludes
+      // honeypot-style buttons (e.g. "I'm not a robot") from targetIndex,
+      // not just the "Scroll Down" placeholder.
+      const targetIndex = buttons.findIndex((b) => b.text && !isDecoyLabel(b.text));
       return {
         hasWb: !!document.getElementById('wb'),
         hasMyButton: buttons.length > 0,
@@ -80,7 +95,7 @@ async function readButtonState(page) {
         // scrolling at all.
         iframeCount: document.querySelectorAll('iframe').length,
       };
-    })
+    }, DECOY_BUTTON_TEXT_PATTERN)
     .catch(() => ({
       hasWb: false, hasMyButton: false, targetIndex: -1, targetVisible: false, hasScrollButton: false,
       buttonCount: 0, scrollY: -1, buttonsSummary: '', iframeCount: -1,
@@ -121,12 +136,18 @@ async function sweepToExtreme(page, direction, deadline) {
  * whichever one is both on-screen and not covered by a decoy overlay (the
  * cursor would genuinely show a hand over it) — or -1 if none qualify yet.
  */
-async function findClickableInstance(page, selector) {
+async function findClickableInstance(page, selector, excludeTextPattern) {
   return page
-    .evaluate((sel) => {
+    .evaluate(({ sel, excludePattern }) => {
+      // See DECOY_BUTTON_TEXT_PATTERN's comment — a decoy that's on-screen
+      // and genuinely uncovered still needs to be skipped by TEXT here,
+      // since this scan otherwise has no other way to tell it apart from
+      // the real target (both pass every positional/overlay check).
+      const exclude = excludePattern ? new RegExp(excludePattern, 'i') : null;
       const els = Array.from(document.querySelectorAll(sel));
       for (let i = 0; i < els.length; i++) {
         const el = els[i];
+        if (exclude && exclude.test((el.textContent || '').trim())) continue;
         const rect = el.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) continue;
         if (rect.top < 0 || rect.bottom > window.innerHeight) continue; // off-screen
@@ -139,7 +160,7 @@ async function findClickableInstance(page, selector) {
         }
       }
       return -1;
-    }, selector)
+    }, { sel: selector, excludePattern: excludeTextPattern || null })
     .catch(() => -1);
 }
 
@@ -157,9 +178,9 @@ async function findClickableInstance(page, selector) {
  * deadline, exactly like a human would keep waiting rather than mash the
  * button through a popup that flickered back in.
  */
-async function clickWhenClear(page, ctx, selector, deadline) {
+async function clickWhenClear(page, ctx, selector, deadline, excludeTextPattern) {
   while (Date.now() < deadline) {
-    const idx = await findClickableInstance(page, selector);
+    const idx = await findClickableInstance(page, selector, excludeTextPattern);
     if (idx >= 0) {
       const clicked = await page
         .locator(selector)
@@ -398,7 +419,11 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       const sel = buttonState.hasWb ? '#wb' : (buttonState.hasMyButton ? '.myButton' : null);
       if (sel) {
         ctx.log?.(`[llGate] Waiting for ${sel} to clear (cursor genuinely a hand, not just present in the DOM)…`);
-        const clicked = await clickWhenClear(page, ctx, sel, deadline);
+        // #wb is a unique id selector (no decoy-text ambiguity possible);
+        // .myButton can match multiple instances including a honeypot
+        // (see DECOY_BUTTON_TEXT_PATTERN), so only that path needs the
+        // text exclusion.
+        const clicked = await clickWhenClear(page, ctx, sel, deadline, sel === '.myButton' ? DECOY_BUTTON_TEXT_PATTERN : undefined);
         ctx.log?.(`[llGate] ${sel} ${clicked ? 'clicked' : 'never cleared before deadline — moving on'}`);
         // A little breathing room after a real click before checking again —
         // matches how a human actually interacts (not back-to-back at a
