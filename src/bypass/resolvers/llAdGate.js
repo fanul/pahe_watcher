@@ -3,7 +3,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from '../../core/logger.js';
 import { isAntiAutomationWallPage } from '../antiAutomationWall.js';
-import { tryAutoClickRecaptchaCheckbox } from '../captcha/index.js';
 
 const log = createLogger('resolver:llAdGate');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -345,6 +344,7 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
     // and doesn't spam every 500ms tick. Remove once the real cause here
     // is identified.
     let lastLoggedButtonCount = -1;
+    let loggedRecaptchaPresence = false;
     while (Date.now() < deadline) {
       if (page.isClosed()) throw new Error('LL ad-gate page closed unexpectedly');
       const url = page.url();
@@ -376,21 +376,19 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
         throw new Error(`LL ad-gate wall detected at ${url}`);
       }
 
-      // Confirmed live: the LL template's own verify step can be gated
-      // behind a real Google reCAPTCHA v2 "I'm not a robot" checkbox —
-      // the .myButton click was retrying forever ("<div></div> intercepts
-      // pointer events") because the recaptcha iframe/checkbox was
-      // sitting unchecked in front of it, not because of an ordinary
-      // ad-decoy overlay. Same free-pass technique already proven for the
-      // main pipeline's captcha handling (tryAutoClickRecaptchaCheckbox) —
-      // a real, trusted click on the checkbox, no injected script.
+      // Reported live: intercelestial.com's own recaptcha-checkbox-border
+      // element got clicked and that was actively wrong here — disabled.
+      // Detection kept (cheap, useful in the diagnostic log below) but the
+      // auto-click is gone; this gate's own .myButton/#wb allowlist flow
+      // is what actually needs to run undisturbed, not a checkbox click
+      // that was never confirmed to help THIS specific gate and, per the
+      // user, should never be touched at all here.
       const hasRecaptcha = await page
-        .evaluate(() => !!document.querySelector('iframe[src*="recaptcha/api2/anchor"]'))
+        .evaluate(() => !!document.querySelector('iframe[src*="recaptcha/api2/anchor"], .recaptcha-checkbox-border'))
         .catch(() => false);
-      if (hasRecaptcha) {
-        ctx.log?.('[llGate] reCAPTCHA checkbox detected — attempting auto-click');
-        const solved = await tryAutoClickRecaptchaCheckbox(page);
-        ctx.log?.(`[llGate] reCAPTCHA checkbox ${solved ? 'passed (free pass, no challenge)' : 'clicked — waiting to see if a challenge appears'}`);
+      if (hasRecaptcha && !loggedRecaptchaPresence) {
+        loggedRecaptchaPresence = true;
+        ctx.log?.('[llGate] recaptcha-checkbox-border element present — deliberately not clicking it (see comment above)');
       }
 
       // Confirmed live: this template can show TWO .myButton instances at
