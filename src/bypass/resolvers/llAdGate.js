@@ -54,6 +54,12 @@ async function readButtonState(page) {
         return {
           text: (el.textContent || '').trim(),
           visible: rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= window.innerHeight,
+          // Diagnostic-only fields (top/scrollY) — cheap to compute, not
+          // used by any decision logic, but lets a live log line show
+          // exactly how the page shifted when the button count changes,
+          // instead of guessing. See "diagnostic: .myButton count changed"
+          // below for why this was added.
+          top: Math.round(rect.top),
         };
       });
       const targetIndex = buttons.findIndex((b) => b.text && !/scroll/i.test(b.text));
@@ -63,9 +69,22 @@ async function readButtonState(page) {
         targetIndex,
         targetVisible: targetIndex >= 0 ? buttons[targetIndex].visible : false,
         hasScrollButton: buttons.some((b) => /scroll/i.test(b.text)),
+        buttonCount: buttons.length,
+        scrollY: Math.round(window.scrollY),
+        buttonsSummary: buttons.map((b, i) => `${i}:"${b.text.slice(0, 20)}"${b.visible ? '(vis)' : ''}@${b.top}`).join(', '),
+        // Real hCaptcha/reCAPTCHA/Turnstile iframes always carry a src on
+        // the provider's own domain — if a button-like element only ever
+        // exists inside an iframe, none of the main-frame-only checks
+        // above would ever see it, which would explain a "never detected
+        // at any scroll position" failure that has nothing to do with
+        // scrolling at all.
+        iframeCount: document.querySelectorAll('iframe').length,
       };
     })
-    .catch(() => ({ hasWb: false, hasMyButton: false, targetIndex: -1, targetVisible: false, hasScrollButton: false }));
+    .catch(() => ({
+      hasWb: false, hasMyButton: false, targetIndex: -1, targetVisible: false, hasScrollButton: false,
+      buttonCount: 0, scrollY: -1, buttonsSummary: '', iframeCount: -1,
+    }));
 }
 
 /**
@@ -261,6 +280,15 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
 
     const deadline = Date.now() + timeoutMs;
     let lastUrl = page.url();
+    // TEMPORARY diagnostic — investigating a reported live case where the
+    // button was never detected at any scroll position (top/middle/
+    // bottom) on a second intercelestial.com landing, with the hypothesis
+    // that the page adds a NEW .myButton above the existing one(s) and
+    // shifts things in a way targetIndex/scrollHeight don't handle. Only
+    // logs when the button count actually changes, so this stays cheap
+    // and doesn't spam every 500ms tick. Remove once the real cause here
+    // is identified.
+    let lastLoggedButtonCount = -1;
     while (Date.now() < deadline) {
       if (page.isClosed()) throw new Error('LL ad-gate page closed unexpectedly');
       const url = page.url();
@@ -317,6 +345,12 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       // decision below is based on what's actually usable right now, not
       // on whichever button happens to come first in the markup.
       let buttonState = await readButtonState(page);
+      if (buttonState.buttonCount !== lastLoggedButtonCount) {
+        lastLoggedButtonCount = buttonState.buttonCount;
+        ctx.log?.(
+          `[llGate][diag] .myButton count=${buttonState.buttonCount} iframes=${buttonState.iframeCount} scrollY=${buttonState.scrollY} targetIndex=${buttonState.targetIndex} targetVisible=${buttonState.targetVisible} → [${buttonState.buttonsSummary}]`,
+        );
+      }
 
       // Primary: a real target already exists in the DOM (even off-screen)
       // — scroll directly to that exact element via Playwright's own
