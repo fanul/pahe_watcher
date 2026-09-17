@@ -59,9 +59,19 @@ function cleanupInBackground(browser, profileDir) {
  * one NOT labeled "scroll" — and whether it's currently on-screen, plus
  * whether a "Scroll Down" placeholder exists at all. Shared by the sweep
  * logic below and the main loop so both act on the exact same snapshot.
+ *
+ * Confirmed live: this template can render its button entirely inside an
+ * iframe (diagnostic log showed `iframes=1` while `.myButton count=0` at
+ * every scroll position — the button was never missing, it was just never
+ * looked for in the right document). `page.evaluate()` only ever sees the
+ * main frame, so this now runs the same detection in EVERY frame
+ * (`page.frames()`, main frame included) and returns whichever frame
+ * actually has a real target — that frame is carried on the result so
+ * callers scroll/click inside it, not blindly against the main page.
  */
 async function readButtonState(page) {
-  return page
+  const detectInFrame = (frame) =>
+    frame
     .evaluate((realPattern) => {
       const isRealLabel = (text) => new RegExp(realPattern, 'i').test(text);
       const buttons = Array.from(document.querySelectorAll('.myButton')).map((el) => {
@@ -108,6 +118,11 @@ async function readButtonState(page) {
         hasMyButton: buttons.length > 0,
         targetIndex,
         targetVisible: targetIndex >= 0 ? buttons[targetIndex].visible : false,
+        // Viewport-relative top of the target button right now (negative =
+        // above the viewport, needs scrolling UP; > innerHeight = below,
+        // needs scrolling DOWN) — lets the caller sweep toward the button's
+        // actual side instead of always trying "down" first regardless.
+        targetTop: targetIndex >= 0 ? buttons[targetIndex].top : null,
         hasScrollButton: buttons.some((b) => /scroll/i.test(b.text)),
         buttonCount: buttons.length,
         scrollY: Math.round(window.scrollY),
@@ -122,10 +137,35 @@ async function readButtonState(page) {
         iframeCount: document.querySelectorAll('iframe').length,
       };
     }, REAL_BUTTON_TEXT_PATTERN)
-    .catch(() => ({
+    .catch(() => null);
+
+  const frames = page.frames();
+  const results = await Promise.all(frames.map(detectInFrame));
+
+  // First frame (main frame is always frames()[0]) that actually has a real,
+  // allowlisted target wins — that's the frame every caller scrolls/clicks
+  // in. If nothing anywhere has a real target yet, fall back to the main
+  // frame's own (likely empty) snapshot so the diagnostic log below still
+  // has sensible numbers, and default to the main frame for any downstream
+  // scroll attempt (a no-op, same as before this iframe-awareness existed).
+  let winner = null;
+  let winnerFrame = null;
+  for (let i = 0; i < frames.length; i++) {
+    const r = results[i];
+    if (r && (r.hasWb || r.targetIndex >= 0)) {
+      winner = r;
+      winnerFrame = frames[i];
+      break;
+    }
+  }
+  if (!winner) {
+    winner = results[0] || {
       hasWb: false, hasMyButton: false, targetIndex: -1, targetVisible: false, hasScrollButton: false,
       buttonCount: 0, scrollY: -1, wbText: '', buttonsSummary: '', iframeCount: -1,
-    }));
+    };
+    winnerFrame = page.mainFrame();
+  }
+  return { ...winner, frame: winnerFrame, frameCount: frames.length };
 }
 
 /**
@@ -151,8 +191,19 @@ async function readButtonState(page) {
  * scrollTop found across EVERY scrollable element on the page (not just
  * window), so the loop only stops once nothing — at any nesting level —
  * is still moving.
+ *
+ * Reported live: a button sitting in the MIDDLE of the page was still
+ * getting missed even with this sweep in place — because the caller only
+ * ever checked readButtonState() AFTER the sweep finished, once it had
+ * already run all the way to the extreme. A button that only renders (or
+ * is only genuinely visible) while scrolled near its own position, and
+ * disappears again once scrolled past, was never caught — the check
+ * happened too late, at the wrong scroll position entirely. `checkFn`
+ * (readButtonState, from the caller) now runs after EVERY tick, and the
+ * sweep stops the instant it reports a real, visible target — instead of
+ * always running the full 25-tick trip to the extreme first regardless.
  */
-async function sweepToExtreme(page, direction, deadline) {
+async function sweepToExtreme(page, direction, deadline, checkFn) {
   const deltaY = direction === 'down' ? 900 : -900;
   const viewport = page.viewportSize() || { width: 1366, height: 768 };
   const cx = Math.round(viewport.width / 2);
@@ -179,6 +230,14 @@ async function sweepToExtreme(page, direction, deadline) {
       }, direction)
       .catch(() => {});
     await page.waitForTimeout(randomDelay(150, 300));
+
+    if (checkFn) {
+      const state = await checkFn();
+      if (state && (state.hasWb || (state.targetIndex >= 0 && state.targetVisible))) {
+        return state; // found mid-sweep — stop right here, don't keep scrolling past it
+      }
+    }
+
     const signature = await page
       .evaluate(() => {
         const tops = Array.from(document.querySelectorAll('*'))
@@ -191,6 +250,7 @@ async function sweepToExtreme(page, direction, deadline) {
     if (signature === lastSignature) break; // nothing, at any level, still moving
     lastSignature = signature;
   }
+  return null;
 }
 
 /**
@@ -202,9 +262,14 @@ async function sweepToExtreme(page, direction, deadline) {
  * interactable right now. Scans every instance and returns the index of
  * whichever one is both on-screen and not covered by a decoy overlay (the
  * cursor would genuinely show a hand over it) — or -1 if none qualify yet.
+ *
+ * Takes a Frame, not necessarily the Page's main frame — readButtonState
+ * may have found the real target inside an iframe (see its own comment),
+ * and the click-time scan has to run in that same document or it would
+ * always see zero elements, same bug as before.
  */
-async function findClickableInstance(page, selector, allowTextPattern) {
-  return page
+async function findClickableInstance(frame, selector, allowTextPattern) {
+  return frame
     .evaluate(({ sel, allowPattern }) => {
       // See REAL_BUTTON_TEXT_PATTERN's comment — a decoy that's on-screen
       // and genuinely uncovered still needs to be filtered out by TEXT
@@ -252,12 +317,16 @@ async function findClickableInstance(page, selector, allowTextPattern) {
  * click blind. It goes back to waiting for clear again, up to the caller's
  * deadline, exactly like a human would keep waiting rather than mash the
  * button through a popup that flickered back in.
+ *
+ * `page` is still needed here purely for `waitForTimeout` (Frame has no
+ * equivalent) — the actual scan/click runs against `frame`, which may be an
+ * iframe, not the page's main frame.
  */
-async function clickWhenClear(page, ctx, selector, deadline, allowTextPattern) {
+async function clickWhenClear(page, frame, ctx, selector, deadline, allowTextPattern) {
   while (Date.now() < deadline) {
-    const idx = await findClickableInstance(page, selector, allowTextPattern);
+    const idx = await findClickableInstance(frame, selector, allowTextPattern);
     if (idx >= 0) {
-      const clicked = await page
+      const clicked = await frame
         .locator(selector)
         .nth(idx)
         .click({ timeout: 3000 })
@@ -271,6 +340,38 @@ async function clickWhenClear(page, ctx, selector, deadline, allowTextPattern) {
     await page.waitForTimeout(randomDelay(200, 500));
   }
   return false;
+}
+
+// TEMPORARY diagnostic — reported live: a full sweep (top, bottom, direct
+// scroll) still finds nothing, AND nothing is visually present on screen
+// either, not just off-screen/unscrolled-to. The iframe-awareness added to
+// readButtonState above was a guess about WHERE the button might be, not a
+// confirmed answer — an iframe present on the page doesn't necessarily mean
+// it holds real gate content (could just as easily be an ad tracking pixel,
+// 0x0 or off-screen by design). This dumps what's ACTUALLY rendered in
+// every frame — visible body text and every iframe's src/size/visibility —
+// so the next occurrence shows the real page state instead of another
+// guess. Remove once the real cause here is confirmed.
+async function dumpFrameDiagnostics(page, ctx) {
+  for (const frame of page.frames()) {
+    const info = await frame
+      .evaluate(() => ({
+        bodyText: (document.body?.innerText || '').trim().slice(0, 200),
+        iframes: Array.from(document.querySelectorAll('iframe')).map((f) => ({
+          src: (f.getAttribute('src') || '').slice(0, 80),
+          w: f.offsetWidth,
+          h: f.offsetHeight,
+        })),
+      }))
+      .catch(() => null);
+    if (!info) {
+      ctx.log?.(`[llGate][diag] frame ${frame.url().slice(0, 60)} — evaluate failed (detached/cross-origin?)`);
+      continue;
+    }
+    ctx.log?.(
+      `[llGate][diag] frame ${frame.url().slice(0, 60)} bodyText="${info.bodyText.replace(/\s+/g, ' ')}" iframes=${JSON.stringify(info.iframes)}`,
+    );
+  }
 }
 
 /**
@@ -398,6 +499,7 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
     // is identified.
     let lastLoggedButtonCount = -1;
     let loggedRecaptchaPresence = false;
+    let loggedFrameDiag = false;
     while (Date.now() < deadline) {
       if (page.isClosed()) throw new Error('LL ad-gate page closed unexpectedly');
       const url = page.url();
@@ -455,7 +557,7 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       if (buttonState.buttonCount !== lastLoggedButtonCount) {
         lastLoggedButtonCount = buttonState.buttonCount;
         ctx.log?.(
-          `[llGate][diag] .myButton count=${buttonState.buttonCount} iframes=${buttonState.iframeCount} scrollY=${buttonState.scrollY} targetIndex=${buttonState.targetIndex} targetVisible=${buttonState.targetVisible} wb="${buttonState.wbText}"(allowed=${buttonState.hasWb}) → [${buttonState.buttonsSummary}]`,
+          `[llGate][diag] .myButton count=${buttonState.buttonCount} iframes=${buttonState.iframeCount} frames=${buttonState.frameCount} scrollY=${buttonState.scrollY} targetIndex=${buttonState.targetIndex} targetVisible=${buttonState.targetVisible} wb="${buttonState.wbText}"(allowed=${buttonState.hasWb}) → [${buttonState.buttonsSummary}]`,
         );
       }
 
@@ -468,8 +570,52 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       // neither extreme ever shows it — that was a real gap, not a timing
       // fluke.
       if (!buttonState.hasWb && buttonState.targetIndex >= 0 && !buttonState.targetVisible) {
-        ctx.log?.('[llGate] Target button is off-screen — scrolling directly to it');
-        await page.locator('.myButton').nth(buttonState.targetIndex).scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+        // Reported live: for a button currently ABOVE the viewport,
+        // Playwright's own scrollIntoViewIfNeeded() (the "precise"
+        // placement used in the else-branch below) doesn't reliably leave
+        // it actually visible — it does the minimal scroll needed, which
+        // can land the button right at the edge of the viewport instead of
+        // clearly on-screen. A full scroll to the page's true top extreme
+        // is simpler and unambiguous for this specific direction, so
+        // prefer that over "precise" placement whenever the button is
+        // above the viewport. Below-viewport targets keep the precise
+        // scroll (see this block's own earlier comment: a full sweep to
+        // the bottom extreme can overshoot past a target sitting in the
+        // MIDDLE of a page taller than one viewport — that risk doesn't
+        // apply the same way scrolling up toward a near-top button).
+        if (buttonState.targetTop != null && buttonState.targetTop < 0) {
+          ctx.log?.('[llGate] Target button is above the viewport — scrolling all the way to the top');
+          await sweepToExtreme(page, 'up', deadline);
+          buttonState = await readButtonState(page);
+        } else {
+          ctx.log?.('[llGate] Target button is off-screen — scrolling directly to it');
+          // The target may live inside an iframe — get that <iframe>
+          // element itself on-screen in the main page first, or its own
+          // internal scrollIntoViewIfNeeded can succeed while the iframe
+          // box itself is still off-screen in the parent document.
+          if (buttonState.frame !== page.mainFrame()) {
+            const frameEl = await buttonState.frame.frameElement().catch(() => null);
+            await frameEl?.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+          }
+          await buttonState.frame.locator('.myButton').nth(buttonState.targetIndex).scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+          await page.waitForTimeout(randomDelay(200, 400));
+          buttonState = await readButtonState(page);
+        }
+      }
+
+      // Reported live: right after Cloudflare's own interstitial clears (no
+      // URL change happens for that transition, so the "landed on a new
+      // page" settle-wait above never fires for it), the real button is
+      // often already on-screen near the top the instant real content
+      // renders — but a check that lands mid-transition can transiently
+      // miss it entirely (targetIndex still -1, no position signal to
+      // sweep toward yet), and the page was left scrolled wherever the
+      // interstitial happened to leave it, not necessarily the top. Cheap,
+      // near-instant check first: jump straight to the top and recheck —
+      // resolves the common case immediately without ever touching the
+      // slower, further-displacing sweep loop below.
+      if (!buttonState.hasWb && buttonState.targetIndex < 0 && buttonState.scrollY > 0) {
+        await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
         await page.waitForTimeout(randomDelay(200, 400));
         buttonState = await readButtonState(page);
       }
@@ -482,21 +628,56 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       // one unpredictably as earlier steps complete, which a single direct
       // scroll can race against; two fixed, always-reachable reference
       // points is what a human effectively falls back on too.
+      //
+      // Reported live: a button sitting near the TOP consistently failed to
+      // ever land in the viewport — root cause was this always sweeping to
+      // the BOTTOM first regardless of where the button actually is, then
+      // sweeping back up; that round trip (through however much lazy-
+      // loaded/reshuffled content the bottom sweep touches along the way)
+      // isn't guaranteed to land back at true scrollY=0 the same way a
+      // direct up-sweep from the current position does. `targetTop` (set
+      // by the direct-scroll attempt's own readButtonState call above) is a
+      // real, current signal for which side the button is actually on when
+      // it's known at all — use it to sweep toward the button first, and
+      // only fall back to the fixed down-then-up order when the button
+      // isn't in the DOM yet at all (targetTop is null) and there's no
+      // position signal to go on.
       if (!buttonState.hasWb && (buttonState.targetIndex < 0 || !buttonState.targetVisible)) {
-        ctx.log?.('[llGate] Still not visible — sweeping to the bottom of the page');
-        await sweepToExtreme(page, 'down', deadline);
-        buttonState = await readButtonState(page);
+        const sweepUpFirst = buttonState.targetTop != null && buttonState.targetTop < 0;
+        const firstDir = sweepUpFirst ? 'up' : 'down';
+        const secondDir = sweepUpFirst ? 'down' : 'up';
+        // Reported live: sweeping UP and stopping the instant readButtonState
+        // reports the target "visible" still landed it behind a sticky/
+        // fixed header — targetVisible only checks the button's bounding
+        // box against the viewport, not what's actually painted on top of
+        // it, so a position a sticky bar covers can still read as
+        // "visible". Scrolling up never needs the early-exit that helps
+        // catch a MIDDLE-of-page target on the way down (there's no
+        // equivalent "overshoot past it" risk going up toward a near-top
+        // button) — so an upward sweep always runs the full trip to the
+        // genuine top extreme, past wherever a sticky header settles,
+        // instead of trusting an early "visible" reading that might be a
+        // false positive.
+        const checkFnFor = (dir) => (dir === 'up' ? undefined : () => readButtonState(page));
 
-        if (buttonState.targetIndex < 0 || !buttonState.targetVisible) {
-          ctx.log?.('[llGate] Not found at the bottom — sweeping to the top of the page');
-          await sweepToExtreme(page, 'up', deadline);
-          buttonState = await readButtonState(page);
+        ctx.log?.(`[llGate] Still not visible — sweeping to the ${firstDir === 'down' ? 'bottom' : 'top'} of the page`);
+        const foundFirst = await sweepToExtreme(page, firstDir, deadline, checkFnFor(firstDir));
+        buttonState = foundFirst || await readButtonState(page);
+
+        if (!foundFirst && (buttonState.targetIndex < 0 || !buttonState.targetVisible)) {
+          ctx.log?.(`[llGate] Not found at the ${firstDir === 'down' ? 'bottom' : 'top'} — sweeping to the ${secondDir === 'down' ? 'bottom' : 'top'} of the page`);
+          const foundSecond = await sweepToExtreme(page, secondDir, deadline, checkFnFor(secondDir));
+          buttonState = foundSecond || await readButtonState(page);
         }
 
         if (buttonState.targetIndex >= 0 && buttonState.targetVisible) {
           ctx.log?.('[llGate] Button now visible after sweeping');
         } else {
           ctx.log?.('[llGate] Still not visible after a full sweep — waiting for the page to change');
+          if (!loggedFrameDiag) {
+            loggedFrameDiag = true;
+            await dumpFrameDiagnostics(page, ctx);
+          }
           await page.waitForTimeout(randomDelay(500, 900));
           continue;
         }
@@ -504,6 +685,38 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
 
       const sel = buttonState.hasWb ? '#wb' : (buttonState.hasMyButton ? '.myButton' : null);
       if (sel) {
+        // Reported live: when the target is already on-screen from the very
+        // FIRST check (no scroll ever needed — confirmed right after
+        // Cloudflare clears, the button can already be sitting near the
+        // top), every scroll branch above is skipped entirely, so this
+        // resolver used to go straight to clicking with ZERO prior
+        // interaction of any kind — and the click just never took effect
+        // until the user manually clicked or scrolled once first. Fixing
+        // that needs SOME real interaction event first, but an earlier
+        // version of this fix unconditionally scrolled all the way to the
+        // page top before every click — wrong whenever the button is
+        // actually further down the page (middle/bottom), since that
+        // scrolls straight past it instead of near it. Only jump to the
+        // true top when we're already near the top (scrollY close to 0) —
+        // a full top-scroll there also settles any sticky/fixed header
+        // that a tiny few-pixel nudge could leave half-activated, covering
+        // the button. Anywhere else, a small net-zero wheel tick right in
+        // place fires a genuine interaction event without relocating the
+        // scroll position the earlier steps already got right.
+        {
+          const viewport = page.viewportSize() || { width: 1366, height: 768 };
+          const cx = Math.round(viewport.width / 2);
+          const cy = Math.round(viewport.height / 2);
+          await page.mouse.move(cx, cy).catch(() => {});
+          if (buttonState.scrollY != null && buttonState.scrollY < 50) {
+            await page.mouse.wheel(0, -3000).catch(() => {});
+            await page.waitForTimeout(150);
+          } else {
+            await page.mouse.wheel(0, 2).catch(() => {});
+            await page.waitForTimeout(80);
+            await page.mouse.wheel(0, -2).catch(() => {});
+          }
+        }
         // Requested: once a valid, on-screen target is confirmed, settle
         // for a full second before ever attempting the click — real wall-
         // clock time for whatever decoy-clearing/overlay JS the page runs
@@ -518,7 +731,7 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
         // REAL_BUTTON_TEXT_PATTERN's comment on readButtonState's hasWb
         // check above); defense in depth in case the element's text
         // changes between that check and this actual click.
-        const clicked = await clickWhenClear(page, ctx, sel, deadline, REAL_BUTTON_TEXT_PATTERN);
+        const clicked = await clickWhenClear(page, buttonState.frame, ctx, sel, deadline, REAL_BUTTON_TEXT_PATTERN);
         ctx.log?.(`[llGate] ${sel} ${clicked ? 'clicked' : 'never cleared before deadline — moving on'}`);
         // A little breathing room after a real click before checking again —
         // matches how a human actually interacts (not back-to-back at a
