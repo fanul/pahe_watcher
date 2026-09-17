@@ -3,7 +3,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from '../../core/logger.js';
 import { isAntiAutomationWallPage } from '../antiAutomationWall.js';
-import { minimizeWindow } from '../windowControl.js';
 
 const log = createLogger('resolver:llAdGate');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -352,25 +351,18 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       ).catch(() => {});
     }
 
-    // Not minimized isn't automatically the same as visible/focused (a
-    // freshly launched window can still land in the background depending
-    // on the OS/window manager) — bringToFront() is what actually made the
-    // difference in the earlier A/B test; without it this run got stuck
+    // Confirmed live (both the original A/B test and every minimize
+    // variant tried since — start-minimized, show-then-immediately-
+    // minimize, show-for-5s-then-minimize): this gate genuinely needs the
+    // window focused and visible for the ENTIRE run, not just at launch or
+    // for an initial settle window. Minimizing it at any point reliably
+    // breaks the site's own decoy-clearing logic (Chrome throttles a
+    // hidden/minimized tab's JS via the Page Visibility API), so this
+    // stays fully visible throughout — no minimizeWindow() call anywhere
+    // in this resolver. bringToFront() is what actually made the
+    // difference in the original A/B test; without it this run got stuck
     // the same way a minimized one did.
     await page.bringToFront().catch(() => {});
-
-    // Requested: stay visible for a real 5s window before minimizing,
-    // instead of minimizing on the very next tick — gives the page's own
-    // initial setup/detection checks (the site's bot-gate and early
-    // decoy-clearing logic both appear to run right at load, per
-    // INTERCELESTIAL_ISSUES.md's engine-probe timings, mostly under 3.5s)
-    // real wall-clock time to run with Page Visibility active, before the
-    // window goes down for the rest of the click/scroll work. Still
-    // genuinely minimizes after that (via CDP, see windowControl.js) —
-    // the acknowledged A/B-test risk isn't gone, just deferred past the
-    // page's own startup window instead of applying immediately.
-    await page.waitForTimeout(5000);
-    await minimizeWindow(page);
 
     // Every .myButton click reliably pop-unders a new tab (this template's
     // own ad monetization) and Chrome hands THAT tab focus — so our actual
