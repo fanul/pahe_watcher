@@ -15,6 +15,18 @@
 export const SCHEMA_SQL = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
+-- Reported live: "database is locked" (SQLITE_BUSY) crashed the process
+-- outright — including from INSIDE jobQueue.js's own failure-handling
+-- catch block (recording a job's retry is itself a write, with no
+-- try/catch of its own around it), so a single transient lock (another
+-- process/tool briefly touching the file, a WAL checkpoint, antivirus
+-- real-time scanning, etc.) could take the whole app down. Default
+-- busy_timeout is 0 — SQLite fails IMMEDIATELY on any contention rather
+-- than waiting. This decouples recovery from application code entirely:
+-- SQLite itself now retries internally for up to 5s before giving up,
+-- which is enough for basically any transient lock to clear on its own,
+-- with zero bespoke retry logic needed anywhere that touches the store.
+PRAGMA busy_timeout = 5000;
 
 CREATE TABLE IF NOT EXISTS posts (
   id                 INTEGER PRIMARY KEY,
