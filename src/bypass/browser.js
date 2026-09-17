@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { createLogger } from '../core/logger.js';
 import { getInjectedAutomationScript } from './userscript.js';
+import { minimizeWindow } from './windowControl.js';
 
 const log = createLogger('browser');
 
@@ -206,6 +207,21 @@ export class BrowserManager {
     page.setDefaultTimeout(45_000);
 
     const stealth = this.config?.bypass?.stealth || {};
+
+    // Reported live: --start-minimized (the launch arg below, in
+    // _ensureContext) doesn't reliably end up minimized in practice — a
+    // known Chromium quirk, which is exactly why windowControl.js's CDP-
+    // based minimizeWindow()/restoreWindow() pair already exists (the
+    // manual-captcha flow depends on restoreWindow() actually working, so
+    // that path was already proven live). Explicitly minimizing here too,
+    // right after every fresh page, doesn't depend on the launch flag
+    // landing correctly. page.bringToFront() elsewhere (e.g. the ad-popup
+    // closer in bypass/index.js) only reactivates a TAB within an
+    // already-visible window — confirmed NOT to restore a genuinely
+    // minimized OS window — so this won't get silently undone by that.
+    if (!this.headless && stealth.startMinimized !== false) {
+      await minimizeWindow(page);
+    }
     if (stealth.blockAdsAndTrackers !== false) {
       const AD_DOMAINS = [
         'adservice', 'google-analytics', 'popads', 'propeller', 'clickunder',
