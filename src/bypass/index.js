@@ -361,6 +361,18 @@ export class BypassEngine {
     let handledLLGate = false;
     const deadCheckedUrls = new Set();
     let lastCheckpointedUrl = null;
+    // TEMPORARY diagnostic — investigating a reported live case where an
+    // oii.la-family chain (oii.la/tpi.li/clksz.com/srnky.com) lands on
+    // unexpected pages and appears to click the wrong thing, instead of
+    // progressing toward GDFlix. The actual clicking for this domain
+    // family happens entirely inside the injected page-context script
+    // (oiila.js's console.log calls, which only ever reach this app's own
+    // stdout, not ctx.log/job.logs — a debugging-methodology mistake
+    // already made once earlier this investigation). This dumps every
+    // button-like element's text/class via a Node-side evaluate (which DOES
+    // reach ctx.log) once per distinct URL on this domain family, so the
+    // next live run shows real evidence instead of guessing again.
+    const oiilaDiagLoggedUrls = new Set();
     // Stable, resumable hops worth checkpointing (see setCheckpoint in
     // jobQueue.js) — deliberately NOT every hop: the ad-chain redirect noise
     // in between (random ad-popup domains, one-shot signed shortener
@@ -564,6 +576,29 @@ export class BypassEngine {
         // there — see the "widget not detected" note lower down); until
         // then, a job stuck here should time out with a clear picture in
         // the logs rather than force a submission that's confirmed harmful.
+        try {
+          const oiilaHost = new URL(url).hostname.toLowerCase();
+          if (/(^|\.)(oii\.la|tpi\.li|clksz\.com|srnky\.com)$/.test(oiilaHost) && !oiilaDiagLoggedUrls.has(url)) {
+            oiilaDiagLoggedUrls.add(url);
+            const dump = await p
+              .evaluate(() => {
+                const els = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a.get-link, a.btn-success'));
+                return els.map((el) => {
+                  const rect = el.getBoundingClientRect();
+                  return {
+                    tag: el.tagName,
+                    text: (el.textContent || el.value || '').trim().slice(0, 30),
+                    cls: (el.className || '').toString().slice(0, 40),
+                    disabled: !!el.disabled,
+                    href: el.getAttribute('href') || undefined,
+                    visible: rect.width > 0 && rect.height > 0,
+                  };
+                });
+              })
+              .catch((err) => ({ evalError: err.message }));
+            ctx.log?.(`[diag] oii.la-family page elements at ${shorten(url)}: ${JSON.stringify(dump)}`);
+          }
+        } catch {}
 
         // Node-side ouo.io automation fallback when userscript is disabled/restricted
         if (url && /ouo\.(io|press)/i.test(url)) {
