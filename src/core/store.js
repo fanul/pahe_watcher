@@ -645,10 +645,22 @@ export class Store {
     return this._stmt.countJobs.get().n;
   }
 
-  /** Paginated jobs for the GUI list. Returns { items, total }. */
-  queryJobs({ limit = 30, offset = 0 } = {}) {
-    const total = this.countJobs();
-    const rows = this.db.prepare('SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
+  /**
+   * Paginated jobs for the GUI list. Returns { items, total }.
+   * `search` is a plain substring match on title, case-insensitive — jobs
+   * are a small, bounded table (hundreds, not tens of thousands like
+   * posts), so a full FTS5 index the way queryPosts uses is unnecessary
+   * overhead here.
+   */
+  queryJobs({ limit = 30, offset = 0, search = '' } = {}) {
+    const term = search.trim();
+    const whereSql = term ? 'WHERE title LIKE ? COLLATE NOCASE' : '';
+    const params = term ? [`%${term}%`] : [];
+
+    const total = this.db.prepare(`SELECT COUNT(*) AS n FROM jobs ${whereSql}`).get(...params).n;
+    const rows = this.db
+      .prepare(`SELECT * FROM jobs ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset);
     return { items: rows.map((row) => this._hydrateJob(row)), total };
   }
 

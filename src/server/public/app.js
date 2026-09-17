@@ -425,6 +425,39 @@ $('#btnClearAllJobs').onclick = async () => {
   }
 };
 
+// ── job search (server-side, debounced like the Posts search) ──
+let jobFilterDebounce = null;
+function refilterJobsSoon(delay = 300) {
+  clearTimeout(jobFilterDebounce);
+  jobFilterDebounce = setTimeout(() => loadJobs(state, { reset: true }), delay);
+}
+const jobSearchInput = $('#filterJobSearch');
+const jobSearchInputWrap = jobSearchInput?.closest('.search-input-wrap');
+function updateJobSearchClearVisibility() {
+  jobSearchInputWrap?.classList.toggle('has-value', Boolean(jobSearchInput?.value));
+}
+jobSearchInput?.addEventListener('input', () => {
+  updateJobSearchClearVisibility();
+  refilterJobsSoon(300);
+});
+$('#btnClearJobSearch')?.addEventListener('click', () => {
+  if (!jobSearchInput) return;
+  jobSearchInput.value = '';
+  jobSearchInput.focus();
+  updateJobSearchClearVisibility();
+  refilterJobsSoon(0);
+});
+updateJobSearchClearVisibility();
+
+// ── manual "Add Job" accordion (hidden by default, toggled next to Retry/Clear) ──
+const manualJobForm = $('#manualJobForm');
+$('#btnToggleAddJob')?.addEventListener('click', () => {
+  if (!manualJobForm) return;
+  const showing = manualJobForm.style.display !== 'none';
+  manualJobForm.style.display = showing ? 'none' : 'flex';
+  if (!showing) manualJobForm.querySelector('input[name="url"]')?.focus();
+});
+
 // ── dead-link reporting (semi-automated — prepares the comment text, the
 // user solves the captcha and submits it themselves on pahe.ink) ──
 const reportDialog = $('#reportDialog');

@@ -258,7 +258,8 @@ export function createApiRouter(app) {
   router.get('/jobs', (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 30, 100);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
-    res.json(store.queryJobs({ limit, offset }));
+    const search = typeof req.query.search === 'string' ? req.query.search : '';
+    res.json(store.queryJobs({ limit, offset, search }));
   });
   router.get('/jobs/:id', (req, res) => {
     const job = store.getJob(req.params.id);

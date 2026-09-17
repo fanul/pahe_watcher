@@ -3,26 +3,40 @@ import { $, api, esc } from './state.js';
 const LIMIT = 30;
 let offset = 0;
 let total = 0;
-let loading = false;
+// Same reasoning as posts.js's paginationLoading/loadSeq pair (see that
+// file's comment for the full story: a naive `if (loading) return` guard
+// silently dropped a just-typed search's request if an earlier one was
+// still in flight). "Load more" keeps a simple overlap guard since two
+// concurrent non-reset calls would corrupt the shared offset counter; a
+// fresh search/filter (reset:true) always proceeds and supersedes
+// whatever's in flight via the sequence number instead.
+let paginationLoading = false;
+let loadSeq = 0;
 
 /**
- * Fetch a page of jobs (server-side paginated, newest first) and render.
- * `reset: true` (default) replaces the loaded set; `reset: false` appends
- * the next page — used by "Load more".
+ * Fetch a page of jobs (server-side paginated, newest first, optionally
+ * title-filtered) and render. `reset: true` (default) replaces the loaded
+ * set; `reset: false` appends the next page — used by "Load more".
  */
 export async function loadJobs(state, { reset = true } = {}) {
-  if (loading) return;
-  loading = true;
+  if (!reset && paginationLoading) return;
+  const seq = ++loadSeq;
   if (reset) offset = 0;
+  if (!reset) paginationLoading = true;
+
+  const search = $('#filterJobSearch')?.value?.trim() || '';
+  const params = new URLSearchParams({ limit: LIMIT, offset: String(offset) });
+  if (search) params.set('search', search);
 
   try {
-    const res = await api(`/jobs?limit=${LIMIT}&offset=${offset}`);
+    const res = await api(`/jobs?${params}`);
+    if (seq !== loadSeq) return; // superseded by a newer call — discard
     state.jobs = reset ? res.items : [...state.jobs, ...res.items];
     total = res.total;
     offset += res.items.length;
     renderJobs(state);
   } finally {
-    loading = false;
+    if (!reset) paginationLoading = false;
   }
 }
 
