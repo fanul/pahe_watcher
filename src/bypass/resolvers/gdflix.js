@@ -4,20 +4,22 @@ import { extractCookieSourceDomains, parseCookieString } from '../cookieUtils.js
 const log = createLogger('resolver:gdflix');
 
 /**
- * GDFlix resolver. Once the ad chain lands on a gdflix.* /file/ page, this
- * extracts the actual Google Drive (or pixeldrain / direct) link.
+ * GDFlix resolver. Once the ad chain lands on a gdflix.* (or gdtot.* — same
+ * "G-Drive Link"/"Download File" button template, GDToT being the site
+ * GDFlix's script was cloned from) /file/ page, this extracts the actual
+ * Google Drive (or pixeldrain / direct) link.
  *
  * GDFlix layouts change often; selectors are intentionally broad and ordered by
  * preference. Tune `LINK_BUTTON_SELECTORS` against the live page if it breaks.
  */
 
-// Anchored to an actual domain label: "gdflix" must sit at the start of the
-// hostname or right after a dot, and the TLD must run to the end of the
-// string. An unanchored /gdflix\.[a-z]+/ would also match unrelated hosts
+// Anchored to an actual domain label: "gdflix"/"gdtot" must sit at the start
+// of the hostname or right after a dot, and the TLD must run to the end of
+// the string. An unanchored /gdflix\.[a-z]+/ would also match unrelated hosts
 // that merely contain that substring, e.g. "not-gdflix.example.com" (matches
 // "gdflix.example") — which would wrongly trigger cookie injection (with the
 // user's real GDFlix session) against an untrusted page.
-const GDFLIX_HOST_RE = /(^|\.)gdflix\.[a-z]{2,}$/i;
+const GDFLIX_HOST_RE = /(^|\.)(gdflix|gdtot)\.[a-z]{2,}$/i;
 
 const PRIMARY_LINK_SELECTORS = [
   'a:has-text("G-Drive Link")',

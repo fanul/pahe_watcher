@@ -6,9 +6,11 @@ import { isGoogleAuthHost, ensureGoogleLogin, normalizeGoogleDriveLink } from '.
 import { isDeadLinkPage } from './deadLinkPatterns.js';
 import { isAntiAutomationWallPage } from './antiAutomationWall.js';
 import { resolveLLAdGate, isLLAdGateUrl } from './resolvers/llAdGate.js';
+import { resolveOiilaGate, isOiilaGateUrl } from './resolvers/oiilaGate.js';
 import { AD_HOSTS } from './userscript.js';
 import { restoreWindow } from './windowControl.js';
 import { isWorkerCacheOriginUrl, checkWorkerCache, saveToWorkerCache } from './shortlinkWorkerCache.js';
+import { parseDownloadOptions } from '../parser/postParser.js';
 
 const log = createLogger('bypass');
 
@@ -32,6 +34,63 @@ function hostnameOf(url) {
     return new URL(url).hostname;
   } catch {
     return '';
+  }
+}
+
+/**
+ * intercelestial.com/teknoasian.com "ht=" entry links are minted directly
+ * into pahe.ink's post-page HTML at whatever moment deep-sync fetched it —
+ * confirmed live (llAdGate.js's dumpFrameDiagnostics) that reusing one even
+ * a short while later, or from a different session than the one that
+ * fetched the page, silently lands on a decoy "astrobiology blog" homepage
+ * instead of the real ad-gate — no error, just a page with no button ever
+ * to find, no matter how deterministic the scroll/click logic is. `job.url`
+ * is captured once at deep-sync time and never refreshed on retry, so any
+ * job whose first hop is one of these hosts was frequently doomed before
+ * ever navigating anywhere.
+ *
+ * Re-fetches the post page in THIS SAME browser page — not a separate HTTP
+ * client — right before the first hop, so whatever token gets minted is
+ * bound to the exact session about to use it, with no staleness window.
+ * Returns null (never throws) on any failure, so callers can fall back to
+ * the stored job.url exactly as before this existed.
+ */
+async function refreshEphemeralEntryLink(page, job, ctx) {
+  if (!job.postLink) return null;
+  try {
+    await page.goto(job.postLink, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const html = await page.content();
+    const options = parseDownloadOptions(html, job.title);
+    // job.qualityLabel/sizeLabel aren't always populated — confirmed live
+    // both null on a real job — so requiring an exact match on them (as
+    // this originally did) meant `undefined === "some real label"` always
+    // failed and this refresh silently never found anything. provider+
+    // quality alone is required; qualityLabel/sizeLabel only narrow down
+    // when there's genuine ambiguity (more than one option sharing the
+    // same provider+quality, e.g. two different codecs both at 1080p) AND
+    // the job actually carries a value to compare against.
+    const sameProviderQuality = options.filter(
+      (o) => o.provider === job.provider && o.quality === job.quality,
+    );
+    let match = sameProviderQuality[0] || null;
+    if (sameProviderQuality.length > 1) {
+      match =
+        sameProviderQuality.find(
+          (o) =>
+            (!job.qualityLabel || o.qualityLabel === job.qualityLabel) &&
+            (!job.sizeLabel || o.sizeLabel === job.sizeLabel),
+        ) || match;
+    }
+    if (!match) {
+      ctx.log?.(
+        `[refresh] Could not find a matching "${job.provider} ${job.quality || ''}" option on the live post page (layout changed or the season/size heading shifted) — using the stored entry link as-is.`,
+      );
+      return null;
+    }
+    return match.url;
+  } catch (err) {
+    ctx.log?.(`[refresh] Failed to refresh entry link from ${job.postLink}: ${err.message}`);
+    return null;
   }
 }
 
@@ -211,7 +270,7 @@ export class BypassEngine {
     // popup landing on a real ad-chain host never gets closed either way.
     const WHITELIST_DOMAINS = this.config?.bypass?.tabPruningWhitelist || [
       ...AD_HOSTS,
-      'gdflix', 'drive.google', 'pixeldrain', 'pixeldra.in', 'about:blank',
+      'gdflix', 'gdtot', 'drive.google', 'pixeldrain', 'pixeldra.in', 'about:blank',
     ];
 
     // Track any new tabs or popups created in this context
@@ -264,16 +323,91 @@ export class BypassEngine {
     let workerCacheKeyUrl = null;
 
     try {
+      // intercelestial.com/teknoasian.com entry links go stale fast — see
+      // refreshEphemeralEntryLink's own comment for how this was confirmed
+      // live. Mint a fresh one in this exact browser session before it's
+      // ever used, but only when we're actually about to rely on job.url as
+      // the real starting point (a checkpoint or cache hit means this hop
+      // doesn't need to happen at all this attempt).
+      let entryUrl = job.url;
+      if (!job.checkpointUrl && !cachedDestination && isLLAdGateUrl(job.url)) {
+        const refreshed = await refreshEphemeralEntryLink(page, job, ctx);
+        if (refreshed) {
+          ctx.log?.(`[refresh] Minted a fresh entry link before the first hop: ${shorten(refreshed)}`);
+          entryUrl = refreshed;
+        }
+      }
+
       // Resume from the last known-good hop if a previous attempt on this
       // same job got that far (see jobQueue.js's setCheckpoint) — skips
       // re-walking the whole chain, including intercelestial.com's flaky
       // ad-gate, on every retry. Falls back to the shortlink cache, then to
-      // job.url if there's no checkpoint (first attempt) or the queue
-      // already cleared a stale one after a failed resume.
-      const startUrl = job.checkpointUrl || cachedDestination || job.url;
+      // job.url (freshly refreshed above, if applicable) if there's no
+      // checkpoint (first attempt) or the queue already cleared a stale one
+      // after a failed resume.
+      const startUrl = job.checkpointUrl || cachedDestination || entryUrl;
       const startLabel = job.checkpointUrl ? ' (resumed from checkpoint)' : usedCachedStart ? ' (from cached destination)' : '';
       ctx.log?.(`Starting: ${job.provider} ${job.quality || ''} — ${shorten(startUrl)}${startLabel}`);
-      await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+
+      if (isLLAdGateUrl(startUrl)) {
+        // Confirmed live: navigating this app's OWN shared page there first
+        // — even just once, with the regular stealth stack (the usual
+        // injected automation script, anti-adblock guards, timer-speedup
+        // interceptors) — burns the ht= token before the isolated resolver
+        // below ever gets a turn. A standalone patchright run against the
+        // ORIGINAL, untouched ?ht= link got the real "CLICK TO VERIFY"
+        // .myButton every single time; the exact same token, after this
+        // app's shared page had already visited and been redirected away by
+        // it first, showed a decoy astrobiology-blog homepage instead — the
+        // isolated resolver's whole "fresh, clean, patchright-only, real
+        // page.click()" design was being handed a token this app itself had
+        // already spent, never the pristine entry link. So for this family
+        // of ad-gate, `page` never navigates to the entry link at all — go
+        // straight to the isolated resolver with the untouched startUrl,
+        // then land `page` on wherever it actually escaped to. (The
+        // matching isLLAdGateUrl dispatch inside _driveToFinal's poll loop
+        // stays as-is — it's the fallback for landing here mid-chain from
+        // some OTHER shortener, not this direct-entry case.)
+        let llResult;
+        try {
+          llResult = await resolveLLAdGate(startUrl, { ctx });
+        } catch (err) {
+          throw new Error(`LL ad-gate resolve failed: ${err.message}`);
+        }
+        ctx.log?.(`LL ad-gate resolved to ${shorten(llResult.finalUrl)}`);
+        ctx.setCheckpoint?.(llResult.finalUrl);
+        await page.goto(llResult.finalUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+      } else if (isOiilaGateUrl(startUrl)) {
+        // Same underlying fix as the LL ad-gate branch above, for the same
+        // reason confirmed live on oii.la/clksz.com: this app's ONE shared,
+        // persistent browser profile (reused across every job and every
+        // retry ever run) had visited this exact slug enough times that the
+        // destination stopped showing the real Continue/Turnstile gate and
+        // started serving unrelated decoy blog content instead — no error,
+        // just nothing left to click. `page` never touches the entry link
+        // with that accumulated session; the isolated resolver below runs
+        // it in a single-use, throwaway profile instead. Checked against
+        // the community Worker cache FIRST — cheaper than ever launching a
+        // browser at all if this exact shortlink is already known.
+        let oiilaResult = null;
+        const workerHit = await checkWorkerCache(startUrl);
+        if (workerHit) {
+          ctx.log?.(`Found destination in community shortlink cache: ${shorten(workerHit)}`);
+          oiilaResult = { finalUrl: workerHit };
+        } else {
+          try {
+            oiilaResult = await resolveOiilaGate(startUrl, { ctx, config: this.config });
+          } catch (err) {
+            throw new Error(`oii.la-family gate resolve failed: ${err.message}`);
+          }
+          ctx.log?.(`oii.la-family gate resolved to ${shorten(oiilaResult.finalUrl)}`);
+          saveToWorkerCache(startUrl, oiilaResult.finalUrl);
+        }
+        ctx.setCheckpoint?.(oiilaResult.finalUrl);
+        await page.goto(oiilaResult.finalUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+      } else {
+        await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+      }
 
       // Community Worker cache (shortlinkWorkerCache.js) — checked against
       // where we actually LANDED, not job.url itself: entry links like
@@ -323,13 +457,16 @@ export class BypassEngine {
       // userscript's own listenerNavigation() — best-effort, never awaited
       // (a slow/unreachable Worker shouldn't delay returning an already-
       // successful result), and shortlinkWorkerCache.js never throws. Keyed
-      // under whichever origin-domain URL we actually landed on (set above
-      // when checking the cache), not job.url — matches how the community
-      // cache itself is keyed. Skipped when we started FROM a cached
-      // destination (nothing new to contribute) or never reached this
-      // family of hosts at all.
-      if (workerCacheKeyUrl && !job.checkpointUrl && cachedDestination !== settled.finalUrl) {
-        saveToWorkerCache(workerCacheKeyUrl, settled.finalUrl);
+      // under every origin-domain URL we actually landed on this run — the
+      // one-shot entry check above (workerCacheKeyUrl) AND every additional
+      // hop _driveToFinal's own per-tick check found (ctx._workerCacheUrls)
+      // — not job.url, matching how the community cache itself is keyed.
+      // Skipped when we started FROM a cached destination (nothing new to
+      // contribute) or never reached this family of hosts at all.
+      if (!job.checkpointUrl && cachedDestination !== settled.finalUrl) {
+        const contributeUrls = new Set(ctx._workerCacheUrls || []);
+        if (workerCacheKeyUrl) contributeUrls.add(workerCacheKeyUrl);
+        for (const url of contributeUrls) saveToWorkerCache(url, settled.finalUrl);
       }
       return { ...settled, hops };
     } catch (err) {
@@ -370,7 +507,13 @@ export class BypassEngine {
     let handledGdflix = false;
     let handledGoogleAuth = false;
     let handledLLGate = false;
+    let handledOiilaGate = false;
     const deadCheckedUrls = new Set();
+    // Every distinct oii.la-family URL (tpi.li/oii.la/srnky.com/clksz.com)
+    // this run has already asked the community Worker cache about — see
+    // the check itself, further down, for why this has to run on EVERY
+    // hop, not just the very first navigation.
+    const checkedWorkerCacheUrls = new Set();
     let lastCheckpointedUrl = null;
     // TEMPORARY diagnostic — investigating a reported live case where an
     // oii.la-family chain (oii.la/tpi.li/clksz.com/srnky.com) lands on
@@ -418,7 +561,7 @@ export class BypassEngine {
     // pruned before the automation gets a chance to act on it.
     const WHITELIST_DOMAINS = this.config?.bypass?.tabPruningWhitelist || [
       ...AD_HOSTS,
-      'gdflix', 'drive.google', 'pixeldrain', 'pixeldra.in', 'about:blank',
+      'gdflix', 'gdtot', 'drive.google', 'pixeldrain', 'pixeldra.in', 'about:blank',
     ];
 
     while (Date.now() < deadline) {
@@ -438,6 +581,30 @@ export class BypassEngine {
 
         if (p === pages[0]) maybeCheckpoint(url);
 
+        // Community shortlink Worker cache (shortlinkWorkerCache.js) —
+        // asked on EVERY distinct oii.la-family URL landed on during this
+        // run, not just the very first navigation. Reported live: the
+        // original integration only checked once, right after resolve()'s
+        // own first page.goto() — so a chain that reaches tpi.li/oii.la/
+        // srnky.com/clksz.com several hops in (pahe.plus → ouo.io → tpi.li
+        // → …), rather than as the literal starting URL, never got a cache
+        // lookup at all and always fell through to a live Turnstile
+        // challenge the automation can't solve on its own. Checking here,
+        // once per distinct URL, covers every hop regardless of how deep
+        // in the chain it is — matching the reference userscript's own
+        // listenerNavigation(), which hooks every page load, not just one.
+        if (url && !checkedWorkerCacheUrls.has(url) && isWorkerCacheOriginUrl(url)) {
+          checkedWorkerCacheUrls.add(url);
+          ctx._workerCacheUrls = ctx._workerCacheUrls || [];
+          ctx._workerCacheUrls.push(url);
+          const workerDestination = await checkWorkerCache(url);
+          if (workerDestination) {
+            ctx.log?.(`Found destination in community shortlink cache: ${shorten(workerDestination)}`);
+            await p.goto(workerDestination, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+            continue;
+          }
+        }
+
         // 1. Close failed/error tabs immediately
         if (url.includes('chrome-error://') || url.includes('chromewebdata')) {
           ctx.log?.(`[tab] Closing failed/error tab`);
@@ -446,7 +613,20 @@ export class BypassEngine {
         }
 
         // 1b. Close search spam/ad redirect popup tabs immediately (always safe)
-        const isInitialTabCheck = (p === pages[0] && pages.length === 1);
+        //
+        // Reported live: landing on gdtot.dad opened an ad popup, and the
+        // MAIN tab (still sitting on gdtot.dad, which the ad's own redirect
+        // chain then also hijacked) got closed too — not just the popup.
+        // Root cause: this used to also require `pages.length === 1`, so
+        // the instant a second tab (any ad popup) existed, `pages.length`
+        // was never 1 again and this "is it the main tab" check went false
+        // for EVERY page, main tab included — defeating its own purpose in
+        // exactly the situation it exists to handle. `p === pages[0]` alone
+        // is already the correct, stable "is this the original tab" check —
+        // activePages is a Set, so pages[0] (its insertion-order-first
+        // entry) is always the same original tab regardless of how many
+        // other tabs open or close around it.
+        const isInitialTabCheck = (p === pages[0]);
         if (!isInitialTabCheck && url && (url.includes('google.com/search') || url.includes('olxtoto'))) {
           ctx.log?.(`[tab] Closing ad redirect/spam popup: ${shorten(url)}`);
           await closeWithTimeout(p);
@@ -454,8 +634,11 @@ export class BypassEngine {
         }
 
         // 2. Close unwanted ad popups (if enabled, and it's not the initial tab and not whitelisted)
+        // See the matching comment on isInitialTabCheck above — same
+        // `pages.length === 1` bug existed here, closing the main tab
+        // itself the moment any ad popup coexisted with it.
         if (this.config?.bypass?.pruneAdTabs) {
-          const isInitialTab = (p === pages[0] && pages.length === 1);
+          const isInitialTab = (p === pages[0]);
           if (!isInitialTab && url && url !== 'about:blank') {
             const isWhitelisted = WHITELIST_DOMAINS.some(d => url.toLowerCase().includes(d));
             if (!isWhitelisted) {
@@ -707,7 +890,35 @@ export class BypassEngine {
           await p.goto(llResult.finalUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
         }
 
-        // Reached GDFlix — run the resolver once.
+        // oii.la-family (oii.la/tpi.li/srnky.com/clksz.com), reached mid-
+        // chain from some OTHER shortener rather than as the literal
+        // starting URL — same isolated-resolver handoff as resolve()'s own
+        // direct-entry branch (see resolveOiilaGate's docstring for why),
+        // just triggered here for the case where this app's shared page
+        // only discovers it's on one of these hosts after already landing
+        // there via a redirect from elsewhere in the chain.
+        if (url && isOiilaGateUrl(url) && !handledOiilaGate) {
+          handledOiilaGate = true;
+          let oiilaResult = null;
+          const workerHit = await checkWorkerCache(url);
+          if (workerHit) {
+            ctx.log?.(`Found destination in community shortlink cache: ${shorten(workerHit)}`);
+            oiilaResult = { finalUrl: workerHit };
+          } else {
+            try {
+              oiilaResult = await resolveOiilaGate(url, { ctx, config: this.config });
+            } catch (err) {
+              throw new Error(`oii.la-family gate resolve failed: ${err.message}`);
+            }
+            ctx.log?.(`oii.la-family gate resolved to ${shorten(oiilaResult.finalUrl)}`);
+            saveToWorkerCache(url, oiilaResult.finalUrl);
+          }
+          ctx.setCheckpoint?.(oiilaResult.finalUrl);
+          lastCheckpointedUrl = oiilaResult.finalUrl;
+          await p.goto(oiilaResult.finalUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+        }
+
+        // Reached GDFlix (or GDToT — same template, see isGdflixUrl) — run the resolver once.
         if (isGdflixUrl(url) && !handledGdflix) {
           handledGdflix = true;
           const res = await resolveGdflix(
