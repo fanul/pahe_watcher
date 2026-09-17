@@ -53,10 +53,38 @@
         }
       }
 
-      // 3. linegee.net — handles both script-based atob navigation and direct Continue buttons/forms
+      // 3. linegee.net — handles both direct Continue buttons/forms and
+      // script-based atob navigation
       if (/linegee\.net/.test(o)) {
-        // Option A: Script-extracted atob query string navigation
-        if (document.readyState === 'complete') {
+        // Option A: a real, currently-clickable Continue button/link —
+        // checked FIRST and preferred whenever present, since it's an
+        // immediate action rather than a 5-second deferred navigation.
+        // Reported live: "doesn't click Continue right away" — root cause
+        // was this used to check the atob-script pattern (now Option B)
+        // FIRST, unconditionally; whenever a page had BOTH a real button
+        // AND a matching script tag, the atob branch always won (it sets
+        // window.__done before the button check ever runs), so the visible
+        // button silently never got clicked at all, only the 5s-deferred
+        // script path did.
+        const btn = document.querySelector('a.get-link:not(.disabled), a.btn-success[href], button#btn-main, form#go-link button, .btn-captcha');
+        if (btn && !window.__done) {
+          const rawHref = btn.href || btn.getAttribute('href');
+          if (rawHref && /^https?:\/\//i.test(rawHref) && !rawHref.includes('linegee.net')) {
+            window.__done = true;
+            console.log('[pahe-auto] [linegee.net] Direct external Continue link ready: ' + rawHref);
+            window.location.assign(rawHref);
+          } else if (!window.__clickedLinegee) {
+            window.__clickedLinegee = true;
+            console.log('[pahe-auto] [linegee.net] Clicking Continue button');
+            btn.removeAttribute('disabled');
+            btn.click();
+          }
+        }
+
+        // Option B: script-extracted atob query string navigation —
+        // fallback for when there's no real button to click, only a
+        // script-embedded redirect token.
+        if (!btn && document.readyState === 'complete' && !window.__done) {
           document.querySelectorAll('script').forEach((s) => {
             if (/location\.href.*atob/.test(s.textContent) && !window.__done) {
               const b64 = s.textContent.replace(/[\t\s]/g, '').replace(/^.*location.href.*atob\('(.*)'\).*/, '$1');
@@ -65,24 +93,6 @@
               setTimeout(() => { window.location.href = window.location.href + atob(b64); }, 5000);
             }
           });
-        }
-
-        // Option B: Continue button / form click
-        if (!window.__done) {
-          const btn = document.querySelector('a.get-link:not(.disabled), a.btn-success[href], button#btn-main, form#go-link button, .btn-captcha');
-          if (btn) {
-            const rawHref = btn.href || btn.getAttribute('href');
-            if (rawHref && /^https?:\/\//i.test(rawHref) && !rawHref.includes('linegee.net')) {
-              window.__done = true;
-              console.log('[pahe-auto] [linegee.net] Direct external Continue link ready: ' + rawHref);
-              window.location.assign(rawHref);
-            } else if (!window.__clickedLinegee) {
-              window.__clickedLinegee = true;
-              console.log('[pahe-auto] [linegee.net] Clicking Continue button');
-              btn.removeAttribute('disabled');
-              btn.click();
-            }
-          }
         }
       }
 
