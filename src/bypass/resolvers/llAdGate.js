@@ -318,17 +318,31 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
       // on whichever button happens to come first in the markup.
       let buttonState = await readButtonState(page);
 
-      // Not visible at the current scroll position (whether or not a real
-      // target even exists in the DOM yet) — do a full deterministic
-      // sweep: all the way to the bottom, re-check; if still not there,
-      // all the way to the top, re-check. Reported live: this template can
-      // reshuffle which instance is the real one unpredictably enough that
-      // scrolling to one specific computed position wasn't reliable and
-      // needed manual up/down scrolling to actually find it — sweeping
-      // both fixed extremes and re-checking at each is what fixes that
-      // structurally, not a smarter single guess.
+      // Primary: a real target already exists in the DOM (even off-screen)
+      // — scroll directly to that exact element via Playwright's own
+      // actionability scrolling. Deterministic for ANY position on the
+      // page, not just the two extremes: confirmed live, a sweep-only
+      // strategy (scroll to the bottom, then the top) misses a target that
+      // sits in the MIDDLE of a page taller than one viewport, since
+      // neither extreme ever shows it — that was a real gap, not a timing
+      // fluke.
+      if (!buttonState.hasWb && buttonState.targetIndex >= 0 && !buttonState.targetVisible) {
+        ctx.log?.('[llGate] Target button is off-screen — scrolling directly to it');
+        await page.locator('.myButton').nth(buttonState.targetIndex).scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+        await page.waitForTimeout(randomDelay(200, 400));
+        buttonState = await readButtonState(page);
+      }
+
+      // Fallback: either no real target exists in the DOM at all yet (a
+      // page that lazy-reveals the next button only once scrolled), or
+      // the direct scroll above still didn't leave it visible for some
+      // reason — sweep both fixed extremes as a last resort. Reported
+      // live: this template can also reshuffle which instance is the real
+      // one unpredictably as earlier steps complete, which a single direct
+      // scroll can race against; two fixed, always-reachable reference
+      // points is what a human effectively falls back on too.
       if (!buttonState.hasWb && (buttonState.targetIndex < 0 || !buttonState.targetVisible)) {
-        ctx.log?.('[llGate] Button not visible here — sweeping to the bottom of the page');
+        ctx.log?.('[llGate] Still not visible — sweeping to the bottom of the page');
         await sweepToExtreme(page, 'down', deadline);
         buttonState = await readButtonState(page);
 
@@ -341,7 +355,7 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
         if (buttonState.targetIndex >= 0 && buttonState.targetVisible) {
           ctx.log?.('[llGate] Button now visible after sweeping');
         } else {
-          ctx.log?.('[llGate] Still not visible after a full top-to-bottom sweep — waiting for the page to change');
+          ctx.log?.('[llGate] Still not visible after a full sweep — waiting for the page to change');
           await page.waitForTimeout(randomDelay(500, 900));
           continue;
         }
