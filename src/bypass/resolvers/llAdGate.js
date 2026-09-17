@@ -451,6 +451,14 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
 
       const sel = buttonState.hasWb ? '#wb' : (buttonState.hasMyButton ? '.myButton' : null);
       if (sel) {
+        // Requested: once a valid, on-screen target is confirmed, settle
+        // for a full second before ever attempting the click — real wall-
+        // clock time for whatever decoy-clearing/overlay JS the page runs
+        // right after a button becomes visible to actually finish, rather
+        // than racing it. clickWhenClear's own findClickableInstance check
+        // still runs fresh after this wait, so a decoy that reappears
+        // during it is still caught, not blindly clicked into.
+        await page.waitForTimeout(1000);
         ctx.log?.(`[llGate] Waiting for ${sel} to clear (cursor genuinely a hand, not just present in the DOM)…`);
         // Always pass the allowlist, #wb included — "it's a unique id
         // selector" turned out NOT to mean "therefore safe" (see
