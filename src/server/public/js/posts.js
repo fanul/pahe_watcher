@@ -5,7 +5,21 @@ import { $, api, esc } from './state.js';
 const LIMIT = 24;
 let offset = 0;
 let total = 0;
-let loading = false;
+// Pagination ("Load more") still needs a simple in-flight guard — two
+// overlapping non-reset calls would both read the same `offset` before
+// either updates it, duplicating or skipping a page. A fresh search/filter
+// (reset:true) does NOT use this: it must always proceed and win over
+// whatever's in flight, via loadSeq below, not get silently dropped.
+let paginationLoading = false;
+// Reported live: search "finds nothing" was this — a naive `if (loading)
+// return` dropped a just-typed search's request outright if an earlier
+// (e.g. default/reset) request from a moment before was still in flight,
+// leaving whatever that earlier request returned on screen instead. Every
+// loadPosts() call now gets a sequence number; a response only gets
+// applied if it's still the MOST RECENT call by the time it resolves —
+// older in-flight calls are superseded, not dropped, and never overwrite
+// a newer result that already rendered.
+let loadSeq = 0;
 
 // Mirrors REQUIRED_FIELDS in src/parser/metadata/index.js — durationMinutes
 // is deliberately excluded there (and here) since many legitimate posts
@@ -120,9 +134,10 @@ export function markOptionReported(state, postId, url, deadReportedAt) {
  * "Load more".
  */
 export async function loadPosts(state, { reset = true } = {}) {
-  if (loading) return;
-  loading = true;
+  if (!reset && paginationLoading) return;
+  const seq = ++loadSeq;
   if (reset) offset = 0;
+  if (!reset) paginationLoading = true;
 
   const f = currentFilters();
   const params = new URLSearchParams({ limit: LIMIT, offset: String(offset) });
@@ -130,12 +145,16 @@ export async function loadPosts(state, { reset = true } = {}) {
 
   try {
     const res = await api(`/posts?${params}`);
+    // A newer loadPosts() call (e.g. the user kept typing) started and
+    // will resolve its own render — applying this now-stale response on
+    // top would overwrite the correct, newer result on screen.
+    if (seq !== loadSeq) return;
     state.posts = reset ? res.items : [...state.posts, ...res.items];
     total = res.total;
     offset += res.items.length;
     renderPosts(state);
   } finally {
-    loading = false;
+    if (!reset) paginationLoading = false;
   }
 }
 
