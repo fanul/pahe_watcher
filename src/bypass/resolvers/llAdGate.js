@@ -34,7 +34,7 @@ const randomDelay = (minMs, maxMs) => minMs + Math.random() * (maxMs - minMs);
 // construction, no enumeration needed. Shared between readButtonState's
 // target selection and findClickableInstance's final click-time scan so
 // neither can land on anything outside this set, at either step.
-const REAL_BUTTON_TEXT_PATTERN = 'continue|generate link|get verified link|verified link';
+const REAL_BUTTON_TEXT_PATTERN = 'continue|generate link|get verified link|verified link|click to verify';
 
 // Deliberately NOT awaited by callers — closing a real Chrome process and
 // recursively deleting its profile directory (cache, cookie DB, etc.) is
