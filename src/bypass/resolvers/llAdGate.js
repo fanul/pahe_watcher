@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from '../../core/logger.js';
 import { isAntiAutomationWallPage } from '../antiAutomationWall.js';
+import { minimizeWindow } from '../windowControl.js';
 
 const log = createLogger('resolver:llAdGate');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -310,16 +311,16 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
     headless: false,
     channel: 'chrome',
     viewport: { width: 1366, height: 768 },
-    // Deliberately NOT --start-minimized. Confirmed live with a direct A/B
-    // test (user's own hypothesis, verified with hard numbers): minimized,
-    // the .myButton click failed 24 of 28 attempts over 100+s and never
-    // got past the very first step; focused/visible, the same flow cleared
-    // every step and escaped in 73s with only 9 transient failures. Chrome
-    // throttles a hidden/minimized tab's JS (Page Visibility API) — this
-    // template's own decoy-overlay-clearing logic apparently depends on
-    // that JS actually running, so minimizing it doesn't just fail to help,
-    // it reliably breaks the whole resolver. No step here needs a *human*
-    // to look at the window, but the window itself has to stay up.
+    // NOT --start-minimized — launches visible, then gets explicitly
+    // minimized below via CDP after bringToFront(). Requested despite the
+    // acknowledged risk: an earlier direct A/B test found the window
+    // minimized AT ANY POINT during this flow — not just at launch — is
+    // enough to reproduce the failure (24 of 28 attempts, never past the
+    // first step), since Chrome throttles a hidden/minimized tab's JS
+    // (Page Visibility API) and this template's own decoy-overlay-clearing
+    // logic appears to depend on that JS running continuously throughout,
+    // not just at startup. If failures return to that pattern, minimizing
+    // below is the first thing to revert.
   });
 
   try {
@@ -354,10 +355,18 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
     // Not minimized isn't automatically the same as visible/focused (a
     // freshly launched window can still land in the background depending
     // on the OS/window manager) — bringToFront() is what actually made the
-    // difference in the A/B test that validated removing --start-minimized
-    // above; without it this run got stuck the same way the minimized one
-    // did.
+    // difference in the earlier A/B test; without it this run got stuck
+    // the same way a minimized one did.
     await page.bringToFront().catch(() => {});
+
+    // Requested despite the acknowledged risk above — genuinely minimizes
+    // the OS window (via CDP, see windowControl.js) right after the brief
+    // visible moment above, rather than never showing it at all. The A/B
+    // test's failure mode was triggered by the window being minimized
+    // during the actual click/scroll work below, which this still does —
+    // this is not expected to avoid that regression, only to delay it by
+    // however long this one tick takes.
+    await minimizeWindow(page);
 
     // Every .myButton click reliably pop-unders a new tab (this template's
     // own ad monetization) and Chrome hands THAT tab focus — so our actual
