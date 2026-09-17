@@ -136,19 +136,60 @@ async function readButtonState(page) {
  * collapsing), so a "smart" scroll to one specific element isn't reliable
  * enough on its own — a full sweep to a page extreme is a fixed, always-
  * reachable reference point a human effectively falls back on too when a
- * page's layout misbehaves. Stops once scrollY stops moving between ticks
- * (genuinely reached that end) or the deadline/tick budget runs out.
+ * page's layout misbehaves.
+ *
+ * Reported live: the button at the top still often never entered the
+ * viewport — this page has scroll CONTAINERS NESTED inside it, not just
+ * the top-level window. page.mouse.wheel() only scrolls whatever's under
+ * the mouse's current position (wherever a previous click left it, not
+ * necessarily over the real scrollable content), and tracking only
+ * window.scrollY as the stopping signal means a nested container that's
+ * still mid-scroll gets mistaken for "reached the end" the moment the
+ * outer window (which may already be static) stops moving. Now
+ * repositions the mouse over the viewport center before every tick so the
+ * wheel event reliably lands on real content, and tracks the deepest
+ * scrollTop found across EVERY scrollable element on the page (not just
+ * window), so the loop only stops once nothing — at any nesting level —
+ * is still moving.
  */
 async function sweepToExtreme(page, direction, deadline) {
   const deltaY = direction === 'down' ? 900 : -900;
-  let lastY = null;
+  const viewport = page.viewportSize() || { width: 1366, height: 768 };
+  const cx = Math.round(viewport.width / 2);
+  const cy = Math.round(viewport.height / 2);
+  let lastSignature = null;
   for (let i = 0; i < 25 && Date.now() < deadline; i++) {
+    await page.mouse.move(cx, cy).catch(() => {});
     await page.mouse.wheel(0, deltaY).catch(() => {});
+    // Best-effort supplementary nudge for any NESTED scrollable container
+    // the trusted wheel event above might not have reached — deliberately
+    // excludes <html>/<body> (the top-level scroll the wheel event above
+    // already handles as a genuinely trusted gesture; forcing it via JS
+    // too would just duplicate that, not add anything). Never the only
+    // mechanism — the real wheel event still fires regardless — just
+    // insurance for whichever inner element actually holds the button.
+    await page
+      .evaluate((d) => {
+        document.querySelectorAll('*').forEach((el) => {
+          if (el === document.documentElement || el === document.body) return;
+          if (el.scrollHeight - el.clientHeight > 10) {
+            el.scrollTop = d === 'down' ? el.scrollHeight : 0;
+          }
+        });
+      }, direction)
+      .catch(() => {});
     await page.waitForTimeout(randomDelay(150, 300));
-    const y = await page.evaluate(() => window.scrollY).catch(() => null);
-    if (y === null) break;
-    if (y === lastY) break; // no further movement — reached this end
-    lastY = y;
+    const signature = await page
+      .evaluate(() => {
+        const tops = Array.from(document.querySelectorAll('*'))
+          .filter((el) => el !== document.documentElement && el !== document.body && el.scrollHeight - el.clientHeight > 10)
+          .map((el) => Math.round(el.scrollTop));
+        return [Math.round(window.scrollY), ...tops].join(',');
+      })
+      .catch(() => null);
+    if (signature === null) break;
+    if (signature === lastSignature) break; // nothing, at any level, still moving
+    lastSignature = signature;
   }
 }
 
