@@ -376,6 +376,13 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 }
     // it stays the visible/active tab for the resolver's whole run instead
     // of just its first instant.
     browser.on('page', (popup) => {
+      // Requested: this was closing popups with zero record of what they
+      // were. window.open(url)-style popups (confirmed this template's own
+      // pattern) usually already have their URL by the time this event
+      // fires; log whatever's available immediately, then close — closing
+      // is never delayed waiting on this.
+      const popupUrl = (() => { try { return popup.url(); } catch { return null; } })();
+      ctx.log?.(`[llGate] Closing popup: ${popupUrl && popupUrl !== 'about:blank' ? popupUrl.slice(0, 80) : '(url not yet available)'}`);
       popup.close().catch(() => {});
       page.bringToFront().catch(() => {});
     });

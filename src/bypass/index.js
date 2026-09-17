@@ -346,6 +346,17 @@ export class BypassEngine {
       for (const p of activePages) {
         const listener = navListeners.get(p);
         if (listener) p.off('framenavigated', listener);
+        // Requested: every tab this resolver still had open at job end was
+        // being closed silently, with no record of what it was — logged
+        // now (before closing, since a closed page can't report its own
+        // URL) so a job's log shows the full final tab picture, not just
+        // whichever one happened to settle first. p.url() is a plain
+        // cached property (no in-page round trip), safe to read even on a
+        // page that's about to be torn down.
+        if (!p.isClosed()) {
+          const finalUrl = p.url();
+          if (finalUrl && finalUrl !== 'about:blank') ctx.log?.(`[tab] Closing at job end: ${shorten(finalUrl)}`);
+        }
         await closeWithTimeout(p);
       }
     }
