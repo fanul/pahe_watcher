@@ -67,9 +67,21 @@ async function readButtonState(page) {
       const isRealLabel = (text) => new RegExp(realPattern, 'i').test(text);
       const buttons = Array.from(document.querySelectorAll('.myButton')).map((el) => {
         const rect = el.getBoundingClientRect();
+        // Center point, not full bounding-box containment. Reported live:
+        // a sweep that stops exactly where the button sits half-cut-off at
+        // the viewport edge (nothing wrong — that can genuinely be the
+        // true scroll extreme, or just where scrollY happened to land)
+        // made this permanently report not-visible, since requiring the
+        // WHOLE box inside [0, innerHeight] fails the moment either edge
+        // is clipped — even though the button's clickable center is
+        // already on-screen. findClickableInstance clicks at this exact
+        // center point, so "is the center on-screen" is the actually
+        // correct question, not "is the whole box on-screen".
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
         return {
           text: (el.textContent || '').trim(),
-          visible: rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= window.innerHeight,
+          visible: rect.width > 0 && rect.height > 0 && cx >= 0 && cx <= window.innerWidth && cy >= 0 && cy <= window.innerHeight,
           // Diagnostic-only fields (top/scrollY) — cheap to compute, not
           // used by any decision logic, but lets a live log line show
           // exactly how the page shifted when the button count changes,
@@ -168,9 +180,14 @@ async function findClickableInstance(page, selector, allowTextPattern) {
         if (allow && !allow.test((el.textContent || '').trim())) continue;
         const rect = el.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) continue;
-        if (rect.top < 0 || rect.bottom > window.innerHeight) continue; // off-screen
+        // Center point, not full bounding-box containment — see
+        // readButtonState's matching comment. A button half-clipped at the
+        // viewport edge (a real, ordinary scroll position, not a bug) has
+        // an on-screen center and IS genuinely clickable there; requiring
+        // the whole box inside the viewport rejected it for no real reason.
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
+        if (cx < 0 || cx > window.innerWidth || cy < 0 || cy > window.innerHeight) continue; // center off-screen
         const top = document.elementFromPoint(cx, cy);
         if (!top) continue;
         if (top === el || el.contains(top) || window.getComputedStyle(top).cursor === 'pointer') {
