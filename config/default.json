@@ -13,7 +13,7 @@
     "preferredCodecs": ["x265", "x264"],
     "preferredSeriesType": "batch",
     "onlyCompleteSeries": true,
-    "autoResolve": true
+    "autoResolve": false
   },
   "bypass": {
     "browserMode": "auto",
