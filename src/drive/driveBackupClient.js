@@ -138,6 +138,58 @@ export class DriveBackupClient {
     return Buffer.from(res.data);
   }
 
+  /**
+   * Find a file by its EXACT name in the configured folder (not the
+   * NAME_PREFIX substring match `list()` uses for timestamped backups) —
+   * used by the db-sync feature, which keeps one canonical, overwritten
+   * file rather than accumulating a new one every run.
+   */
+  async findFile(name) {
+    if (!this.folderId) return null;
+    const drive = await this._client();
+    const res = await drive.files.list({
+      q: `'${this.folderId}' in parents and trashed = false and name = '${name.replace(/'/g, "\\'")}'`,
+      orderBy: 'createdTime desc',
+      fields: 'files(id, name, createdTime, size)',
+      pageSize: 1,
+      includeItemsFromAllDrives: true,
+      supportsAllDrives: true,
+    });
+    return res.data.files?.[0] || null;
+  }
+
+  /** Downloads by exact filename; returns null (never throws) if no such file exists yet — the expected state before the very first sync. */
+  async downloadByName(name) {
+    const file = await this.findFile(name);
+    if (!file) return null;
+    return this.download(file.id);
+  }
+
+  /** Creates the named file if it doesn't exist yet, otherwise overwrites its content in place — keeps exactly one copy in Drive instead of a new file per sync. */
+  async uploadOrReplace(buffer, name, mimeType = 'application/x-sqlite3') {
+    if (!this.folderId) throw new Error('Set a Drive folder ID first (Settings → Backup & Restore).');
+    const drive = await this._client();
+    const existing = await this.findFile(name);
+    if (existing) {
+      const res = await drive.files.update({
+        fileId: existing.id,
+        media: { mimeType, body: Readable.from(buffer) },
+        fields: 'id, name, modifiedTime, size',
+        supportsAllDrives: true,
+      });
+      log.info('Replaced existing file on Google Drive', { name, id: res.data.id });
+      return res.data;
+    }
+    const res = await drive.files.create({
+      requestBody: { name, parents: [this.folderId] },
+      media: { mimeType, body: Readable.from(buffer) },
+      fields: 'id, name, createdTime, size',
+      supportsAllDrives: true,
+    });
+    log.info('Uploaded new file to Google Drive', { name, id: res.data.id });
+    return res.data;
+  }
+
   /** Lightweight connectivity check for the GUI status panel. */
   async testConnection() {
     if (!this.authorized) return { ok: false, reason: 'not-authorized' };

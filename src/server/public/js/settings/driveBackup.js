@@ -46,6 +46,7 @@ export async function refreshDriveBackupList() {
 export function initDriveBackupSettings(form) {
   const btnConnect = $('#btnConnectDriveBackup');
   const btnTest = $('#btnTestDriveBackup');
+  const btnSync = $('#btnSyncDriveBackup');
   const btnUpload = $('#btnUploadDriveBackup');
   const btnRestore = $('#btnRestoreDriveBackup');
   const select = $('#driveBackupList');
@@ -78,6 +79,17 @@ export function initDriveBackupSettings(form) {
     setStatus('Testing…');
     const result = await api('/backup/drive/test');
     setStatus(result.ok ? `Connected — folder "${result.folderName}"` : `Failed: ${result.reason}`);
+  });
+
+  btnSync?.addEventListener('click', async () => {
+    setStatus('Syncing (downloading Drive copy, merging, pushing back)…');
+    try {
+      const res = await api('/backup/drive/sync', { method: 'POST' });
+      const { posts, postOptions, jobs } = res.pulled;
+      setStatus(`Synced — pulled ${posts} post(s) (+${postOptions} option row(s)) and ${jobs} job(s) from Drive; pushed the merged result back.`);
+    } catch (err) {
+      setStatus(`Sync failed: ${err.message}`);
+    }
   });
 
   btnUpload?.addEventListener('click', async () => {

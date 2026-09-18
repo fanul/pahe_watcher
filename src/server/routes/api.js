@@ -3,6 +3,7 @@ import { bus } from '../../core/eventBus.js';
 import { selectOptions, checkIsSeries } from '../../parser/postParser.js';
 import { buildBackupZip, restoreBackupZip } from '../../core/backup.js';
 import { buildRedirectUri } from '../../drive/driveBackupClient.js';
+import { syncDatabaseWithDrive } from '../../drive/dbSync.js';
 
 /** Same derivation the chip UI uses (src/server/public/js/posts.js) to label a link's codec from its raw quality label. */
 function deriveCodec(qualityLabel) {
@@ -474,6 +475,19 @@ export function createApiRouter(app) {
     setTimeout(() => {
       app.shutdown().catch(() => {}).finally(() => process.exit(0));
     }, 250);
+  });
+
+  // Two-way content sync (posts/post_options/jobs only — never the `meta`
+  // table, which holds plaintext credentials) against a single canonical
+  // file in the Drive folder. Manual/on-demand only, triggered from the
+  // GUI — no periodic auto-sync. See drive/dbSync.js for the merge logic.
+  router.post('/backup/drive/sync', async (req, res) => {
+    try {
+      const result = await syncDatabaseWithDrive({ store, driveBackup });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
+    }
   });
 
   return router;

@@ -15,6 +15,9 @@ data/*
 logs/
 *.log
 
+# scratch files (e.g. Drive db-sync temp exports)
+temp/
+
 # playwright
 playwright-report/
 test-results/
