@@ -62,6 +62,12 @@ npm run server      # web GUI only, watcher not auto-started
 npm run watch:once  # single poll, resolve, then exit (good for cron/CI)
 ```
 
+On Windows, `start.bat` / `stop.bat` wrap this for double-click use: `start.bat`
+clears out any Chrome window this app left running from a prior crash, frees the
+configured port, then runs `npm start`; `stop.bat` frees the port and closes
+every Chrome window this app spawned (never the operator's own regular Chrome —
+see `scripts/kill-chrome.ps1` for how it tells them apart).
+
 ---
 
 ## Google Sheets setup
@@ -136,16 +142,33 @@ Provider codes seen on pahe.ink: **GD** = GDFlix/Google Drive, **1F** = 1Fichier
 
 ---
 
-## Docker (prepared)
+## Docker
 
 ```bash
 docker compose up -d --build
 ```
 
-Uses the official Playwright image (Chromium preinstalled). State and the browser
-profile persist in the `watcher-data` volume; mount your service-account key into
-`/app/credentials`. See `docker-compose.yml` and
-[ARCHITECTURE.md](ARCHITECTURE.md) for headful/manual-captcha-in-container notes.
+Uses the official Playwright image (Chromium + a real Chrome channel
+preinstalled — see `docker/Dockerfile`). State and the browser profile
+persist in the `watcher-data` volume; mount your service-account key into
+`/app/credentials`.
+
+The container itself never needs a display. Two ways to handle captcha
+solving from a headless server:
+
+- **Fully unattended** — `CAPTCHA_PROVIDER=2captcha` (or another paid
+  solver), `BYPASS_CDP_ENABLED=false`. No human involved at all.
+- **Manual solving from your own PC** — `BYPASS_CDP_ENABLED=true` +
+  `BYPASS_CDP_URL=ws://<your-pc-ip>:9222` pointing at a real Chrome you run
+  locally (`--remote-debugging-port=9222`). Every browser this app drives —
+  the main pipeline *and* the intercelestial/oii.la isolated resolvers —
+  connects to that Chrome instead of launching one in the container, so a
+  captcha shows up as a normal browser window on your own screen to solve
+  by hand. Full walkthrough (both the Docker side and the PC-client side):
+  [`cdp_feature.md`](cdp_feature.md).
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for more on how the container and
+remote-browser modes fit together.
 
 ---
 

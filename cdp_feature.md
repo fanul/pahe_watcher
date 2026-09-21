@@ -2,6 +2,8 @@
 
 Dokumentasi ini menjelaskan cara mengonfigurasi dan menggunakan fitur **Remote Browser via CDP** di Pahe Watcher. Fitur ini sangat berguna jika Anda menjalankan Pahe Watcher di dalam **Docker** (atau server headless), namun ingin menyelesaikan captcha manual langsung dari Google Chrome fisik yang berjalan di PC lokal (client) Anda.
 
+> **Cakupan**: `cdpEnabled`/`cdpUrl` ini dipakai oleh **seluruh** browser yang dijalankan app — bukan cuma pipeline utama, tapi juga resolver isolated untuk intercelestial.com/teknoasian.com (`llAdGate.js`) dan keluarga oii.la/tpi.li/srnky.com/clksz.com (`oiilaGate.js`). Ketiganya sama-sama connect ke Chrome fisik yang sama di PC Anda lewat `connectOverCDP()`, masing-masing dapat *browser context* baru yang terisolasi (setara profil/cookie kosong) tiap kali jalan — jadi server (container) tidak pernah perlu launch Chrome-nya sendiri sama sekali.
+
 ---
 
 ## 🛠️ Langkah 1: Jalankan Chrome di PC Client dengan Debugging CDP Aktif

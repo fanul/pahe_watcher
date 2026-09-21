@@ -1,12 +1,30 @@
 # pahe-watcher — runs the watcher + web GUI with Playwright/Chromium preinstalled.
 # The Playwright base image ships the browser and all system libs.
-FROM mcr.microsoft.com/playwright:v1.49.1-jammy
+FROM mcr.microsoft.com/playwright:v1.61.1-noble
 
 WORKDIR /app
+
+# The base image's own bundled Node predates node:sqlite's minimum
+# (>=22.5.0 — src/core/store.js uses DatabaseSync; see ARCHITECTURE.md
+# "Requirements"). Installed explicitly rather than trusting whatever a
+# given Playwright image tag happens to ship, since that's changed under
+# us before (the previous pin, v1.49.1-jammy, predated the requirement
+# entirely).
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version
 
 # Install deps first for better layer caching.
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev --no-audit --no-fund
+
+# This app launches with `channel: "chrome"` by default (real Google
+# Chrome, not Playwright's own bundled Chromium build — see browser.js /
+# llAdGate.js / oiilaGate.js) since a real Chrome install is what actually
+# passes Cloudflare Turnstile reliably. The Playwright base image only
+# ships its own Chromium; the "chrome" channel needs installing separately.
+RUN npx playwright install --with-deps chrome
 
 # App source
 COPY . .

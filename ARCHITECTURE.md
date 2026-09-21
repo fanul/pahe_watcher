@@ -128,11 +128,26 @@ pahe.ink directly itself.
 The default image runs headless — pair it with `CAPTCHA_PROVIDER=2captcha` for
 fully unattended operation.
 
-For **manual** captcha solving inside Docker you need a visible browser. Planned
-approach (sketched in `docker-compose.yml`): run with `BROWSER_MODE=headful`
-under a lightweight X server + **noVNC** sidecar so the operator can solve
-captchas from a browser tab, while the GUI’s captcha banner coordinates timing.
-This is deferred to the Docker phase.
+For **manual** captcha solving inside Docker, the container itself never needs
+a display: `BYPASS_CDP_ENABLED=true` + `BYPASS_CDP_URL=ws://<client-pc>:9222`
+makes every browser this app drives — the main pipeline (`browser.js`) *and*
+the intercelestial/teknoasian isolated resolver (`llAdGate.js`) *and* the
+oii.la/tpi.li/srnky.com/clksz.com isolated resolver (`oiilaGate.js`) — connect
+to a real Chrome the operator runs on their own PC via
+`chromium.connectOverCDP()` instead of launching a local browser. Each of the
+three acquires its own fresh, isolated `BrowserContext` on that same remote
+Chrome (`newContext()` — separate cookies/storage, not a shared session), so
+none of the "start every gate resolve from a genuinely clean session" fixes
+this project relies on are lost just because the browser itself is remote.
+The operator sees the automation's browser windows pop up on their own
+screen and solves captchas directly, exactly as they would running this app
+locally — full setup in [`cdp_feature.md`](cdp_feature.md).
+
+(An earlier plan sketched running a visible browser *inside* the container
+itself, under an X server + noVNC sidecar, so the operator would solve
+captchas from a web-based VNC tab instead. CDP-to-the-operator's-own-PC
+turned out simpler — no extra service/sidecar, no virtual display to run at
+all — so that approach was dropped in favor of it.)
 
 ## Testing
 
@@ -152,7 +167,10 @@ This is deferred to the Docker phase.
 Node **≥ 22.5.0** — `src/core/store.js` uses the built-in `node:sqlite`
 module (`DatabaseSync`), which requires it. Startup prints an
 `ExperimentalWarning: SQLite is an experimental feature` — expected, not a
-bug. `docker/Dockerfile`'s pinned Playwright base image predates this
-requirement and needs a version bump before the Docker path is exercised
-again (tracked separately; Docker isn't currently in active use for this
-project).
+bug. `docker/Dockerfile` explicitly installs Node 22.x itself (via
+NodeSource) rather than trusting whatever the pinned Playwright base image
+tag happens to ship, and separately installs the real `chrome` channel
+Playwright's own bundled Chromium doesn't include — not yet build-verified
+in an actual `docker build`, since no Docker is available in this dev
+environment; verify both (`docker run --rm <image> node --version` and that
+`channel: "chrome"` launches cleanly) before relying on it.

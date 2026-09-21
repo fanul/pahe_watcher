@@ -19,9 +19,15 @@ services:
     volumes:
       - watcher-data:/data
       - ./credentials:/app/credentials:ro
-    # For MANUAL captcha solving you need a visible browser. In containers use
-    # BROWSER_MODE=headless with CAPTCHA_PROVIDER=2captcha, OR run headful with a
-    # VNC sidecar (see the commented service below).
+    # For MANUAL captcha solving the container itself needs no display at
+    # all: set BYPASS_CDP_ENABLED=true and BYPASS_CDP_URL in .env to point
+    # at a real Chrome the operator runs on their own PC
+    # (--remote-debugging-port=9222) — every browser this app drives,
+    # including the intercelestial/oii.la isolated resolvers, connects to
+    # that remote Chrome instead of launching one in the container. Full
+    # setup: cdp_feature.md. Alternatively, for fully unattended operation
+    # with no human ever solving a captcha, use CAPTCHA_PROVIDER=2captcha
+    # and leave BYPASS_CDP_ENABLED=false (BROWSER_MODE stays headless).
 
   # ── Optional: MCP server (next phase) ──
   # mcp:
@@ -31,9 +37,6 @@ services:
   #   volumes:
   #     - watcher-data:/data
   #     - ./credentials:/app/credentials:ro
-
-  # ── Optional: headful browser + noVNC for manual captcha (next phase) ──
-  # See ARCHITECTURE.md "Manual captcha in containers".
 
 volumes:
   watcher-data:
