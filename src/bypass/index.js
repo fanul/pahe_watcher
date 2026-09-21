@@ -370,7 +370,7 @@ export class BypassEngine {
         // some OTHER shortener, not this direct-entry case.)
         let llResult;
         try {
-          llResult = await resolveLLAdGate(startUrl, { ctx });
+          llResult = await resolveLLAdGate(startUrl, { ctx, config: this.config });
         } catch (err) {
           throw new Error(`LL ad-gate resolve failed: ${err.message}`);
         }
@@ -867,7 +867,7 @@ export class BypassEngine {
           handledLLGate = true;
           let llResult;
           try {
-            llResult = await resolveLLAdGate(url, { ctx });
+            llResult = await resolveLLAdGate(url, { ctx, config: this.config });
           } catch (err) {
             // One shot per job attempt — spawning a whole new browser
             // instance to retry immediately would be wasteful, and a fresh

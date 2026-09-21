@@ -60,11 +60,45 @@ function cleanupInBackground(browser, profileDir) {
   browser
     .close()
     .catch((err) => log.warn(`Cleanup error: ${err.message}`))
-    .finally(() =>
+    .finally(() => {
+      // profileDir is null under CDP mode (see acquireIsolatedContext) —
+      // nothing local to delete, and closing the context there only ends
+      // this one isolated context, not the shared remote Chrome process.
+      if (!profileDir) return;
       fs.promises.rm(profileDir, { recursive: true, force: true }).catch((err) => {
         log.warn(`Profile cleanup error: ${err.message}`);
-      }),
-    );
+      });
+    });
+}
+
+/**
+ * Same helper as llAdGate.js's acquireIsolatedContext (see its own comment
+ * for the full reasoning) — a genuinely fresh browser context either way,
+ * local throwaway profile or a fresh incognito-style context on a remote
+ * Chrome under `bypass.cdpEnabled`/`cdpUrl`, so this resolver can run from
+ * a server/Docker container with no display of its own.
+ */
+async function acquireIsolatedContext(config) {
+  const cdpUrl = config?.bypass?.cdpUrl;
+  const cdpEnabled = config?.bypass?.cdpEnabled;
+  const pw = await import('patchright');
+
+  if (cdpEnabled && cdpUrl) {
+    const remoteBrowser = await pw.chromium.connectOverCDP(cdpUrl);
+    const context = await remoteBrowser.newContext({ viewport: { width: 1366, height: 768 } });
+    return { context, profileDir: null };
+  }
+
+  const profileDir = path.resolve(
+    __dirname, '..', '..', '..', 'data',
+    `oiilagate-run-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  const context = await pw.chromium.launchPersistentContext(profileDir, {
+    headless: false,
+    channel: 'chrome',
+    viewport: { width: 1366, height: 768 },
+  });
+  return { context, profileDir };
 }
 
 /**
@@ -103,17 +137,7 @@ function cleanupInBackground(browser, profileDir) {
  * @returns {Promise<{finalUrl: string}>}
  */
 export async function resolveOiilaGate(startUrl, { ctx = {}, config = {}, timeoutMs = 120000 } = {}) {
-  const profileDir = path.resolve(
-    __dirname, '..', '..', '..', 'data',
-    `oiilagate-run-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
-
-  const pw = await import('patchright');
-  const browser = await pw.chromium.launchPersistentContext(profileDir, {
-    headless: false,
-    channel: 'chrome',
-    viewport: { width: 1366, height: 768 },
-  });
+  const { context: browser, profileDir } = await acquireIsolatedContext(config);
 
   try {
     // Same automation this app's shared pipeline browser already runs

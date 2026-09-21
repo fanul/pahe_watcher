@@ -47,11 +47,68 @@ function cleanupInBackground(browser, profileDir) {
   browser
     .close()
     .catch((err) => log.warn(`Cleanup error: ${err.message}`))
-    .finally(() =>
+    .finally(() => {
+      // profileDir is null under CDP mode (see acquireIsolatedContext) —
+      // there's no local profile directory to delete, and closing the
+      // context there only ends this one isolated context, not the shared
+      // remote Chrome process itself (which keeps running on the client
+      // PC for the next job).
+      if (!profileDir) return;
       fs.promises.rm(profileDir, { recursive: true, force: true }).catch((err) => {
         log.warn(`Profile cleanup error: ${err.message}`);
-      }),
-    );
+      });
+    });
+}
+
+/**
+ * Gets a fresh, isolated browser context to run the gate in — either a
+ * genuinely new local Chrome process with a throwaway profile (the
+ * original design), or, when `config.bypass.cdpEnabled`/`cdpUrl` are set,
+ * a fresh incognito-style context on an ALREADY-RUNNING remote Chrome
+ * instance (connectOverCDP + newContext, same pattern BrowserManager's own
+ * CDP mode uses — see browser.js). The latter is what makes this resolver
+ * usable from a Linux server/Docker container with no display of its own:
+ * the server never launches a browser locally at all, it only drives
+ * Chrome running on the operator's own PC over the network. `newContext()`
+ * on a shared remote Browser still gets its own cookie jar/storage — the
+ * "genuinely fresh session every run" property this resolver depends on
+ * (see the module docstring on why that matters) holds either way, it's
+ * just a new BrowserContext within one long-lived Chrome process instead
+ * of a brand new OS process.
+ *
+ * @returns {Promise<{context: import('patchright').BrowserContext, profileDir: string|null}>}
+ */
+async function acquireIsolatedContext(config) {
+  const cdpUrl = config?.bypass?.cdpUrl;
+  const cdpEnabled = config?.bypass?.cdpEnabled;
+  const pw = await import('patchright');
+
+  if (cdpEnabled && cdpUrl) {
+    const remoteBrowser = await pw.chromium.connectOverCDP(cdpUrl);
+    const context = await remoteBrowser.newContext({ viewport: { width: 1366, height: 768 } });
+    return { context, profileDir: null };
+  }
+
+  const profileDir = path.resolve(
+    __dirname, '..', '..', '..', 'data',
+    `llgate-run-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  const context = await pw.chromium.launchPersistentContext(profileDir, {
+    headless: false,
+    channel: 'chrome',
+    viewport: { width: 1366, height: 768 },
+    // NOT --start-minimized — launches visible, then gets explicitly
+    // minimized below via CDP after bringToFront(). Requested despite the
+    // acknowledged risk: an earlier direct A/B test found the window
+    // minimized AT ANY POINT during this flow — not just at launch — is
+    // enough to reproduce the failure (24 of 28 attempts, never past the
+    // first step), since Chrome throttles a hidden/minimized tab's JS
+    // (Page Visibility API) and this template's own decoy-overlay-clearing
+    // logic appears to depend on that JS running continuously throughout,
+    // not just at startup. If failures return to that pattern, minimizing
+    // below is the first thing to revert.
+  });
+  return { context, profileDir };
 }
 
 /**
@@ -380,13 +437,18 @@ async function dumpFrameDiagnostics(page, ctx) {
  * signs of working earlier in this investigation, instead of the app's
  * usual automation stack:
  *   - raw `patchright.chromium.launchPersistentContext()`, NOT BrowserManager
- *   - a genuinely fresh profile dir, deleted when this call finishes
+ *     — or, under `bypass.cdpEnabled`, a fresh context on a remote Chrome
+ *     the operator runs themselves (see acquireIsolatedContext) so this
+ *     can run from a server/Docker container with no display of its own
+ *   - a genuinely fresh profile dir, deleted when this call finishes (or,
+ *     under CDP mode, a genuinely fresh BrowserContext on the shared
+ *     remote browser, closed when this call finishes — same "no leftover
+ *     session" property either way)
  *   - no injected automation script at all (no getInjectedAutomationScript,
  *     no decoy-stripper, no DOMAIN_RULES, no speedup-timer override)
  *   - `page.click()` (Playwright's real, trusted click) for every button,
  *     no synthetic el.click()
- *   - fully isolated: its own process, own profile, closed and deleted on
- *     every exit path
+ *   - fully isolated: its own profile/context, closed on every exit path
  *
  * This intentionally does NOT reuse bypass/index.js's evaluateWithTimeout
  * or any of the click-decoy-clearing logic built up earlier — the point of
@@ -397,31 +459,16 @@ async function dumpFrameDiagnostics(page, ctx) {
  * @param {string} startUrl the intercelestial.com/teknoasian.com entry link
  * @param {object} opts
  * @param {{log?: (msg: string) => void}} [opts.ctx] optional job-log sink
+ * @param {object} [opts.config] app config — only `bypass.cdpEnabled`/
+ *   `bypass.cdpUrl` are read, to decide between a local throwaway-profile
+ *   launch and a fresh context on a remote Chrome (see
+ *   acquireIsolatedContext for why both still give a genuinely clean
+ *   session either way)
  * @param {number} [opts.timeoutMs] overall budget for this resolver
  * @returns {Promise<{finalUrl: string}>}
  */
-export async function resolveLLAdGate(startUrl, { ctx = {}, timeoutMs = 120000 } = {}) {
-  const profileDir = path.resolve(
-    __dirname, '..', '..', '..', 'data',
-    `llgate-run-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
-
-  const pw = await import('patchright');
-  const browser = await pw.chromium.launchPersistentContext(profileDir, {
-    headless: false,
-    channel: 'chrome',
-    viewport: { width: 1366, height: 768 },
-    // NOT --start-minimized — launches visible, then gets explicitly
-    // minimized below via CDP after bringToFront(). Requested despite the
-    // acknowledged risk: an earlier direct A/B test found the window
-    // minimized AT ANY POINT during this flow — not just at launch — is
-    // enough to reproduce the failure (24 of 28 attempts, never past the
-    // first step), since Chrome throttles a hidden/minimized tab's JS
-    // (Page Visibility API) and this template's own decoy-overlay-clearing
-    // logic appears to depend on that JS running continuously throughout,
-    // not just at startup. If failures return to that pattern, minimizing
-    // below is the first thing to revert.
-  });
+export async function resolveLLAdGate(startUrl, { ctx = {}, config = {}, timeoutMs = 120000 } = {}) {
+  const { context: browser, profileDir } = await acquireIsolatedContext(config);
 
   try {
     const page = await browser.newPage();
