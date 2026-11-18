@@ -152,6 +152,38 @@
           if (show && window.__c4 !== true) { window.__c4 = true; show.click(); }
         } catch {}
       }
+
+      // 6. Generic shortlink/ad-gate button fallback for rotated/unlisted domains
+      // (skipped on hosts that have their own dedicated/isolated resolvers).
+      if (!/intercelestial\.com|teknoasian\.com|exe\.io|exeygo\.com|exeo\.app|exey\.io|exe-links\.com|exe-urls\.com|exego\.app|exnion\.com|gdflix|gdtot|google\.com|pahe\.ink|ouo\.(io|press)/.test(o)) {
+        const hasBlockingCaptcha =
+          !!document.querySelector('.cf-turnstile, .g-recaptcha, .h-captcha') && !isCaptchaSolved();
+        if (!hasBlockingCaptcha) {
+          const GENERIC_ALLOW_RE = /^(continue|continue to link|generate link|get link|get verified link|verified link|click to verify|click here to continue|go to link|open link|proceed|next step)$/i;
+          const candidates = document.querySelectorAll(
+            '.myButton:not(.saynotoads), a.get-link:not(.disabled), button#getlink, button#getnewlink, a#startButton, button#btn-main:not(.disabled), #generater.ready, #showlink.ready, button, a.btn, a[class*="btn"], input[type="submit"], input[type="button"]',
+          );
+          for (const el of candidates) {
+            if (el.dataset.paheClicked) continue;
+            if (el.disabled || el.hasAttribute('disabled') || el.classList.contains('disabled')) continue;
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) continue;
+            const text = (el.textContent || el.value || '').replace(/\s+/g, ' ').trim();
+            if (/robot|captcha|adblock|scroll/i.test(text)) continue;
+            const isKnownSelector =
+              el.classList.contains('myButton') ||
+              el.classList.contains('get-link') ||
+              ['getlink', 'getnewlink', 'startButton', 'btn-main', 'generater', 'showlink'].includes(el.id);
+            if (!isKnownSelector && !GENERIC_ALLOW_RE.test(text)) continue;
+            el.dataset.paheClicked = '1';
+            console.log('[pahe-auto] [fallback] Clicking button: ' + (text || el.id || el.className));
+            el.click();
+            break;
+          }
+        }
+      }
     } catch (err) {
       console.error('[pahe-auto] Error in fallback resolver: ' + err.message);
     }

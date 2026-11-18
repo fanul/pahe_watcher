@@ -33,7 +33,8 @@ const randomDelay = (minMs, maxMs) => minMs + Math.random() * (maxMs - minMs);
 // construction, no enumeration needed. Shared between readButtonState's
 // target selection and findClickableInstance's final click-time scan so
 // neither can land on anything outside this set, at either step.
-const REAL_BUTTON_TEXT_PATTERN = 'continue|generate link|get link|get verified link|verified link|click to verify';
+const REAL_BUTTON_TEXT_PATTERN = 'continue|generate link|get link|get verified link|verified link|click to verify|go to link|open link|proceed|next step';
+const GENERIC_BUTTON_SELECTOR = 'button, a.btn, a[class*="btn"], input[type="submit"], input[type="button"], a[role="button"]';
 
 // Deliberately NOT awaited by callers — closing a real Chrome process and
 // recursively deleting its profile directory (cache, cookie DB, etc.) is
@@ -129,9 +130,9 @@ async function acquireIsolatedContext(config) {
 export async function readButtonState(page) {
   const detectInFrame = (frame) =>
     frame
-    .evaluate((realPattern) => {
-      const isRealLabel = (text) => new RegExp(realPattern, 'i').test(text);
-      const buttons = Array.from(document.querySelectorAll('.myButton')).map((el) => {
+    .evaluate(({ realPattern, genericSel }) => {
+      const isRealLabel = (text) => new RegExp(realPattern, 'i').test(text) && !/robot|captcha|adblock/i.test(text);
+      const inspectEl = (el) => {
         const rect = el.getBoundingClientRect();
         const style = window.getComputedStyle(el);
         const renderable =
@@ -149,31 +150,52 @@ export async function readButtonState(page) {
           const top = document.elementFromPoint(cx, cy);
           uncovered = !!(top && (top === el || el.contains(top) || top.contains(el)));
         }
+        const rawText = (el.textContent || el.value || '').trim();
         return {
-          text: (el.textContent || '').trim(),
+          text: rawText,
+          disabled: !!(el.disabled || el.hasAttribute?.('disabled') || el.classList?.contains('disabled')),
           renderable,
           visible,
           centered,
           uncovered,
           top: Math.round(rect.top),
         };
-      });
-      // Prefer a matching button that is visible & uncovered, then visible, then renderable,
-      // so a hidden 0x0 decoy never shadows a real button in the middle of the page.
-      const realCandidates = buttons
-        .map((b, i) => ({ b, i }))
-        .filter(({ b }) => isRealLabel(b.text));
-      const picked =
-        realCandidates.find(({ b }) => b.visible && b.uncovered) ||
-        realCandidates.find(({ b }) => b.visible) ||
-        realCandidates.find(({ b }) => b.renderable) ||
-        realCandidates[0];
+      };
+
+      const pickBest = (list) => {
+        const realCandidates = list
+          .map((b, i) => ({ b, i }))
+          .filter(({ b }) => !b.disabled && isRealLabel(b.text));
+        return (
+          realCandidates.find(({ b }) => b.visible && b.uncovered) ||
+          realCandidates.find(({ b }) => b.visible) ||
+          realCandidates.find(({ b }) => b.renderable) ||
+          realCandidates[0] ||
+          null
+        );
+      };
+
+      let targetSelector = '.myButton';
+      let buttons = Array.from(document.querySelectorAll('.myButton')).map(inspectEl);
+      let picked = pickBest(buttons);
+
+      if (!picked) {
+        const genericButtons = Array.from(document.querySelectorAll(genericSel)).map(inspectEl);
+        const genericPicked = pickBest(genericButtons);
+        if (genericPicked) {
+          targetSelector = genericSel;
+          buttons = genericButtons;
+          picked = genericPicked;
+        }
+      }
+
       const targetIndex = picked ? picked.i : -1;
       const wbEl = document.getElementById('wb');
       const wbText = wbEl ? (wbEl.textContent || '').trim() : '';
       return {
         hasWb: !!wbEl && isRealLabel(wbText),
         hasMyButton: buttons.length > 0,
+        targetSelector,
         targetIndex,
         targetVisible: targetIndex >= 0 ? buttons[targetIndex].visible : false,
         targetCentered: targetIndex >= 0 ? buttons[targetIndex].centered : false,
@@ -186,7 +208,7 @@ export async function readButtonState(page) {
         buttonsSummary: buttons.map((b, i) => `${i}:"${b.text.slice(0, 20)}"${b.visible ? '(vis)' : ''}@${b.top}`).join(', '),
         iframeCount: document.querySelectorAll('iframe').length,
       };
-    }, REAL_BUTTON_TEXT_PATTERN)
+    }, { realPattern: REAL_BUTTON_TEXT_PATTERN, genericSel: GENERIC_BUTTON_SELECTOR })
     .catch(() => null);
 
   const frames = page.frames();
@@ -328,7 +350,7 @@ export async function findClickableInstance(frame, selector, allowTextPattern) {
       ];
       for (let i = 0; i < els.length; i++) {
         const el = els[i];
-        if (allow && !allow.test((el.textContent || '').trim())) continue;
+        if (allow && !allow.test((el.textContent || el.value || '').trim())) continue;
         const style = window.getComputedStyle(el);
         if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) continue;
         const rect = el.getBoundingClientRect();
@@ -374,6 +396,45 @@ async function clickWhenClear(page, frame, ctx, selector, deadline, allowTextPat
       blockedTicks++;
       // If an ad or sticky bar is parked right over the button, re-center it
       // (and alternate small nudges) so it moves into a clear band.
+      // If an ad/decoy overlay or sticky bar is parked right over the button,
+      // disarm non-captcha click-decoy overlays sitting on top of it and
+      // re-center the button so it becomes cleanly clickable.
+      if (blockedTicks >= 2) {
+        await frame
+          .evaluate(({ sel, allowPattern }) => {
+            const allow = allowPattern ? new RegExp(allowPattern, 'i') : null;
+            const els = Array.from(document.querySelectorAll(sel));
+            const target = els.find((el) => !allow || allow.test((el.textContent || el.value || '').trim()));
+            if (!target) return;
+            const rect = target.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            if (cx >= 0 && cx <= window.innerWidth && cy >= 0 && cy <= window.innerHeight) {
+              const top = document.elementFromPoint(cx, cy);
+              if (
+                top &&
+                top !== target &&
+                !target.contains(top) &&
+                !top.contains(target) &&
+                top.tagName !== 'IFRAME' &&
+                !top.closest('.cf-turnstile, .g-recaptcha, .h-captcha')
+              ) {
+                const style = window.getComputedStyle(top);
+                const z = parseInt(style.zIndex, 10) || 0;
+                const isOverlay =
+                  style.position === 'fixed' ||
+                  style.position === 'absolute' ||
+                  z >= 999 ||
+                  parseFloat(style.opacity || '1') === 0 ||
+                  !(top.textContent || '').trim();
+                if (isOverlay) {
+                  top.style.setProperty('pointer-events', 'none', 'important');
+                }
+              }
+            }
+          }, { sel: selector, allowPattern: allowTextPattern || null })
+          .catch(() => {});
+      }
       if (blockedTicks % 3 === 0) {
         const nudge = (blockedTicks / 3) % 2 === 1 ? 0 : 120;
         await frame
@@ -552,6 +613,16 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, config = {}, timeout
         return { finalUrl: url };
       }
 
+      // Some intercelestial pages expose the final destination directly on #xxc[href]
+      const xxcHref = await page
+        .evaluate(() => document.querySelector('#xxc[href]')?.href || null)
+        .catch(() => null);
+      if (xxcHref && /^https?:\/\//i.test(xxcHref) && !isLLAdGateUrl(xxcHref)) {
+        ctx.log?.(`[llGate] Found #xxc destination link: ${xxcHref.slice(0, 60)}…`);
+        cleanupInBackground(browser, profileDir);
+        return { finalUrl: xxcHref };
+      }
+
       // Confirmed live: clicking through to the next step here is a real
       // page navigation (a "2nd visit"), not just DOM mutation on the same
       // page — checking/clicking immediately after landing means acting on
@@ -622,7 +693,7 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, config = {}, timeout
           const frameEl = await buttonState.frame.frameElement().catch(() => null);
           await frameEl?.evaluate((el) => el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })).catch(() => {});
         }
-        const targetLoc = buttonState.frame.locator('.myButton').nth(buttonState.targetIndex);
+        const targetLoc = buttonState.frame.locator(buttonState.targetSelector || '.myButton').nth(buttonState.targetIndex);
         await targetLoc
           .evaluate((el) => el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }))
           .catch(() => targetLoc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {}));
@@ -710,7 +781,7 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, config = {}, timeout
         }
       }
 
-      const sel = buttonState.hasWb ? '#wb' : (buttonState.hasMyButton ? '.myButton' : null);
+      const sel = buttonState.hasWb ? '#wb' : (buttonState.hasMyButton ? (buttonState.targetSelector || '.myButton') : null);
       if (sel) {
         // Reported live: when the target is already on-screen from the very
         // FIRST check (no scroll ever needed — confirmed right after

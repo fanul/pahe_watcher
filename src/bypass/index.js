@@ -1,12 +1,13 @@
 import { createLogger } from '../core/logger.js';
 import { BrowserManager } from './browser.js';
 import { createCaptchaSolver, detectCaptcha, tryAutoClickRecaptchaCheckbox } from './captcha/index.js';
-import { isGdflixUrl, resolveGdflix, classifyFinalLink } from './resolvers/gdflix.js';
+import { isGdflixUrl, resolveGdflix, classifyFinalLink, ensureGdflixLogin } from './resolvers/gdflix.js';
 import { isGoogleAuthHost, ensureGoogleLogin, normalizeGoogleDriveLink } from './resolvers/googleDrive.js';
 import { isDeadLinkPage } from './deadLinkPatterns.js';
 import { isAntiAutomationWallPage } from './antiAutomationWall.js';
 import { resolveLLAdGate, isLLAdGateUrl } from './resolvers/llAdGate.js';
 import { resolveOiilaGate, isOiilaGateUrl } from './resolvers/oiilaGate.js';
+import { resolveExeyGate, isExeyGateUrl } from './resolvers/exeyGate.js';
 import { AD_HOSTS } from './userscript.js';
 import { restoreWindow } from './windowControl.js';
 import { isWorkerCacheOriginUrl, checkWorkerCache, saveToWorkerCache } from './shortlinkWorkerCache.js';
@@ -240,6 +241,47 @@ export class BypassEngine {
     return { count, byDomain };
   }
 
+  /**
+   * Verifies whether the current GDFlix session/cookies can actually
+   * authenticate against a GDFlix mirror, using a temporary tab that is
+   * closed right after checking.
+   */
+  async testGdflixLogin({ url, cookies, email, password } = {}) {
+    let targetOrigin = 'https://new4.gdflix.io/';
+    if (url && typeof url === 'string') {
+      try {
+        targetOrigin = `${new URL(url).origin}/`;
+      } catch {}
+    }
+
+    const page = await this.browser.newPage();
+    const logs = [];
+    const ctx = { log: (msg) => logs.push(msg) };
+    try {
+      await page.goto(targetOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      const creds = {
+        email: email ?? this.config?.bypass?.gdflix?.email ?? '',
+        password: password ?? this.config?.bypass?.gdflix?.password ?? '',
+        cookies: cookies !== undefined ? cookies : (this.config?.bypass?.gdflix?.cookies ?? ''),
+      };
+      const result = await ensureGdflixLogin(page, creds, ctx);
+      const finalUrl = page.url();
+      let domain = '';
+      try {
+        domain = new URL(finalUrl).hostname;
+      } catch {}
+      return {
+        ok: Boolean(result?.loggedIn),
+        method: result?.method || null,
+        domain,
+        url: finalUrl,
+        logs,
+      };
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
   async abort(jobId) {
     const active = this.activeJobs.get(jobId);
     if (active) {
@@ -450,6 +492,16 @@ export class BypassEngine {
         }
         ctx.setCheckpoint?.(oiilaResult.finalUrl);
         await page.goto(oiilaResult.finalUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+      } else if (isExeyGateUrl(startUrl)) {
+        let exeyResult = null;
+        try {
+          exeyResult = await resolveExeyGate(startUrl, { ctx, config: this.config });
+        } catch (err) {
+          throw new Error(`exe.io/exeygo gate resolve failed: ${err.message}`);
+        }
+        ctx.log?.(`exe.io/exeygo gate resolved to ${shorten(exeyResult.finalUrl)}`);
+        ctx.setCheckpoint?.(exeyResult.finalUrl);
+        await page.goto(exeyResult.finalUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
       } else {
         await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
       }
@@ -553,6 +605,7 @@ export class BypassEngine {
     let handledGoogleAuth = false;
     let handledLLGate = false;
     let handledOiilaGate = false;
+    let handledExeyGate = false;
     const deadCheckedUrls = new Set();
     // Every distinct oii.la-family URL (tpi.li/oii.la/srnky.com/clksz.com)
     // this run has already asked the community Worker cache about — see
@@ -961,6 +1014,20 @@ export class BypassEngine {
           ctx.setCheckpoint?.(oiilaResult.finalUrl);
           lastCheckpointedUrl = oiilaResult.finalUrl;
           await p.goto(oiilaResult.finalUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+        }
+
+        if (url && isExeyGateUrl(url) && !handledExeyGate) {
+          handledExeyGate = true;
+          let exeyResult = null;
+          try {
+            exeyResult = await resolveExeyGate(url, { ctx, config: this.config });
+          } catch (err) {
+            throw new Error(`exe.io/exeygo gate resolve failed: ${err.message}`);
+          }
+          ctx.log?.(`exe.io/exeygo gate resolved to ${shorten(exeyResult.finalUrl)}`);
+          ctx.setCheckpoint?.(exeyResult.finalUrl);
+          lastCheckpointedUrl = exeyResult.finalUrl;
+          await p.goto(exeyResult.finalUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
         }
 
         // Reached GDFlix (or GDToT — same template, see isGdflixUrl) — run the resolver once.

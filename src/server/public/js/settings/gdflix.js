@@ -2,12 +2,42 @@ import { api } from '../state.js';
 
 let currentCookiesObj = {};
 let editingDomain = null;
+let savedCookiesSnapshot = '';
+
+function updateSavedStatus(form) {
+  const el = document.getElementById('gdflixSavedStatus');
+  if (!el) return;
+
+  const currentVal = form.gdflixCookies?.value || '';
+  const hasUnsaved = currentVal !== savedCookiesSnapshot;
+  const domains = Object.keys(currentCookiesObj);
+
+  if (hasUnsaved) {
+    el.innerHTML = `<span style="color: var(--amber);">● Perubahan belum disimpan (${domains.length} domain di daftar) — klik <b>Save</b> di bawah untuk menyimpan.</span>`;
+    return;
+  }
+
+  if (!savedCookiesSnapshot.trim() || domains.length === 0) {
+    el.innerHTML = '<span style="color: #8b949e;">○ Belum ada cookies tersimpan di config.</span>';
+    return;
+  }
+
+  const labels = domains.map((d) => (d === '*' ? 'default' : d));
+  const preview = labels.slice(0, 3).join(', ') + (labels.length > 3 ? `, +${labels.length - 3}` : '');
+  el.innerHTML = `<span style="color: #3fb950;">✓ Tersimpan di config: ${domains.length} domain (${preview})</span>`;
+}
+
+export function markGdflixCookiesSaved(form) {
+  savedCookiesSnapshot = form.gdflixCookies?.value || '';
+  updateSavedStatus(form);
+}
 
 export function initGdflixSettings(form) {
   const btnAdd = document.getElementById('btnAddGdflixCookie');
   const btnCancel = document.getElementById('btnCancelGdflixCookie');
   const btnApply = document.getElementById('btnApplyGdflixCookie');
   const btnExtract = document.getElementById('btnExtractGdflixCookies');
+  const btnTestLogin = document.getElementById('btnTestGdflixLogin');
   const extractStatus = document.getElementById('gdflixExtractStatus');
   const editor = document.getElementById('gdflixCookieEditor');
   const txtDomain = document.getElementById('gdflixCookieDomain');
@@ -43,6 +73,44 @@ export function initGdflixSettings(form) {
       } catch (err) {
         if (extractStatus) {
           extractStatus.innerHTML = `<span style="color: var(--danger, #f85149);">❌ Gagal mengambil cookies: ${err.message}</span>`;
+        }
+      }
+    });
+  }
+
+  if (btnTestLogin) {
+    btnTestLogin.addEventListener('click', async () => {
+      if (extractStatus) extractStatus.textContent = 'Menguji login GDFlix di browser…';
+      try {
+        const loginUrl = (document.getElementById('gdflixLoginUrl')?.value || '').trim() || 'https://new4.gdflix.io/login';
+        const res = await api('/browser/gdflix-test', {
+          method: 'POST',
+          body: JSON.stringify({
+            url: loginUrl,
+            cookies: form.gdflixCookies?.value || '',
+            email: form.gdflixEmail?.value || '',
+            password: form.gdflixPassword?.value || '',
+          }),
+        });
+        if (res.ok) {
+          const methodLabel = res.method === 'cookies'
+            ? 'via cookies'
+            : res.method === 'session'
+              ? 'via sesi browser'
+              : res.method === 'credentials'
+                ? 'via email/password'
+                : (res.method || 'aktif');
+          if (extractStatus) {
+            extractStatus.innerHTML = `<span style="color: #3fb950;">✓ GDFlix siap dipakai! Terautentikasi di <b>${res.domain || 'gdflix'}</b> (${methodLabel}).</span>`;
+          }
+        } else {
+          if (extractStatus) {
+            extractStatus.innerHTML = `<span style="color: var(--danger, #f85149);">❌ Belum terautentikasi di <b>${res.domain || 'gdflix'}</b> — silakan login lewat "Buka halaman login GDFlix" atau perbarui cookies.</span>`;
+          }
+        }
+      } catch (err) {
+        if (extractStatus) {
+          extractStatus.innerHTML = `<span style="color: var(--danger, #f85149);">❌ Gagal menguji login GDFlix: ${err.message}</span>`;
         }
       }
     });
@@ -107,6 +175,7 @@ function saveToTextarea(form) {
   } else {
     form.gdflixCookies.value = JSON.stringify(currentCookiesObj, null, 2);
   }
+  updateSavedStatus(form);
 }
 
 export function populateGdflixSettings(form, cfg) {
@@ -115,6 +184,7 @@ export function populateGdflixSettings(form, cfg) {
   
   const rawCookies = cfg.bypass.gdflixCookies || '';
   form.gdflixCookies.value = rawCookies;
+  savedCookiesSnapshot = rawCookies;
   
   currentCookiesObj = {};
   if (rawCookies.trim()) {
@@ -136,6 +206,7 @@ export function populateGdflixSettings(form, cfg) {
   if (extractStatus) extractStatus.textContent = '';
 
   renderCookieList(form);
+  updateSavedStatus(form);
 }
 
 export function serializeGdflixSettings(form) {

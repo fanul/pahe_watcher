@@ -408,6 +408,15 @@ export function createApiRouter(app) {
     }
   });
 
+  router.post('/browser/gdflix-test', async (req, res) => {
+    try {
+      const result = await bypass.testGdflixLogin(req.body || {});
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // ── backup (export/import full config + database as a zip) ──
   router.get('/backup/export', (req, res) => {
     try {

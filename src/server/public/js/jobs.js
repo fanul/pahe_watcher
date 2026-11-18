@@ -65,7 +65,7 @@ export function renderJobs(state) {
     const final = j.result?.finalUrl
       ? `<a class="final-link" href="${j.result.finalUrl}" target="_blank" rel="noopener">🔗 ${j.result.linkType}: ${esc(j.result.finalUrl)}</a>` : '';
     const acts = [];
-    if (['failed', 'cancelled', 'dead'].includes(j.status)) acts.push(`<button class="btn small muted" data-retry="${j.id}">Retry</button>`);
+    if (['done', 'failed', 'cancelled', 'dead'].includes(j.status)) acts.push(`<button class="btn small muted" data-retry="${j.id}">Retry</button>`);
     if (j.status === 'queued') {
       acts.push(`<button class="btn small muted" data-pause-job="${j.id}">Pause</button>`);
       acts.push(`<button class="btn small danger" data-cancel="${j.id}">Cancel</button>`);

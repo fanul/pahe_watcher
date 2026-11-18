@@ -526,3 +526,22 @@ test('a bare "Season N" plain-text run (not wrapped in <b>) right before a quali
   assert.equal(opts[2].season, 3);
 });
 
+test('exe.io shortener links (e.g. VF/PD/GD/MG alongside intercelestial TB) are parsed as valid download options', () => {
+  const html = `
+    <div class="box download"><div class="box-inner-block">
+      1080p x265 DD+5.1 | 3.65 GB<br />
+      <a href="https://intercelestial.com/?ht=tb1" target="_blank">TB</a>
+      <a href="https://exe.io/pyRe1" target="_blank">VF</a>
+      <a href="https://exe.io/qUKbjNK" target="_blank">PD</a>
+      <a href="https://exe.io/BZKfr5pt" target="_blank">GD</a>
+      <a href="https://exe.io/AYL6RT" target="_blank">MG</a>
+    </div></div>
+  `;
+  const opts = parseDownloadOptions(html);
+  assert.equal(opts.length, 5);
+  assert.deepEqual(opts.map((o) => o.provider), ['TB', 'VF', 'PD', 'GD', 'MG']);
+  assert.equal(opts[3].host, 'exe.io');
+  assert.equal(opts[3].quality, '1080p');
+  assert.equal(opts[3].sizeLabel, '3.65 GB');
+});
+

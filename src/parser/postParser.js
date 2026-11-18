@@ -13,6 +13,14 @@ export const SHORTENER_HOSTS = [
   'tpi.li',
   'pahe.plus',
   'blogmystt.com',
+  'exe.io',
+  'exeygo.com',
+  'exeo.app',
+  'exey.io',
+  'exe-links.com',
+  'exe-urls.com',
+  'exego.app',
+  'exnion.com',
 ];
 
 /** Provider code -> human name. Codes appear as the anchor text in posts. */

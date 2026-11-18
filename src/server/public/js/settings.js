@@ -5,7 +5,7 @@ import { populateBypassSettings, serializeBypassSettings } from './settings/bypa
 import { populateSheetsSettings, serializeSheetsSettings, initSheetsSettings } from './settings/sheets.js';
 import { populateJdownloaderSettings, serializeJdownloaderSettings } from './settings/jdownloader.js';
 import { populateCaptchaSettings, serializeCaptchaSettings, updateGroupVisibility } from './settings/captcha.js';
-import { populateGdflixSettings, serializeGdflixSettings, initGdflixSettings } from './settings/gdflix.js';
+import { populateGdflixSettings, serializeGdflixSettings, initGdflixSettings, markGdflixCookiesSaved } from './settings/gdflix.js';
 import { populateGoogleSettings, serializeGoogleSettings } from './settings/google.js';
 import { populateSyncSettings, serializeSyncSettings } from './settings/sync.js';
 import { populateDeadLinkReportSettings, serializeDeadLinkReportSettings } from './settings/deadLinkReport.js';
@@ -127,6 +127,7 @@ export function initSettings(refreshAll) {
     }
 
     await api('/config', { method: 'PATCH', body: JSON.stringify(patch) });
+    markGdflixCookiesSaved(f);
     refreshAll();
   });
 }

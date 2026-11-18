@@ -121,12 +121,14 @@ export class JobQueue {
     return false;
   }
 
-  /** Retry a failed/cancelled/dead job. Dead is included so a misclassified job can be manually overridden — bulk retryAll() deliberately excludes it. */
+  /** Retry a failed/cancelled/dead/done job. Dead and done are included for manual single-job re-runs — bulk retryAll() deliberately excludes them. */
   retry(jobId) {
     const job = this.store.getJob(jobId);
     if (!job) return false;
-    if ([JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.DEAD].includes(job.status)) {
-      this._update(job, { status: JobStatus.QUEUED, error: null });
+    if ([JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.DEAD, JobStatus.DONE].includes(job.status)) {
+      const patch = { status: JobStatus.QUEUED, error: null };
+      if (job.status === JobStatus.DONE) patch.result = null;
+      this._update(job, patch);
       this.pending.push(job.id);
       this._drain();
       return true;
