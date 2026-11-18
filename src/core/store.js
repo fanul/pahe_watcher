@@ -308,6 +308,160 @@ export class Store {
     return this._stmt.countPosts.get().n;
   }
 
+  /** Update title, date, and page_found for an already-known post during listing sync. */
+  updateSeenPostListing(id, { title, date, pageFound } = {}) {
+    const numId = Number(id);
+    const existing = this.db.prepare('SELECT date, page_found FROM posts WHERE id = ?').get(numId);
+    if (!existing) return { dateChanged: false };
+    const dateChanged = Boolean(date && existing.date !== date);
+    this.db.prepare(`
+      UPDATE posts
+      SET title = COALESCE(?, title),
+          date = COALESCE(?, date),
+          page_found = COALESCE(?, page_found)
+      WHERE id = ?
+    `).run(title ?? null, date ?? null, pageFound ?? null, numId);
+    return { dateChanged };
+  }
+
+  /** Update page_found for an already-known post during listing sync. */
+  updatePostPageFound(id, pageFound) {
+    if (pageFound === undefined || pageFound === null) return;
+    this.updateSeenPostListing(id, { pageFound });
+  }
+
+  /** Detect whether a gap exists between two adjacent posts ordered newest-first. */
+  _detectSyncGap(prev, curr, maxGapDays = 5) {
+    const diffDays = (new Date(prev.date) - new Date(curr.date)) / (1000 * 3600 * 24);
+    if (prev.page_found === null || curr.page_found === null) {
+      return {
+        diffDays: Number(diffDays.toFixed(1)),
+        pageGap: true,
+        uncrawledNullPage: true,
+      };
+    }
+    const pageSkip = curr.page_found > prev.page_found + 1 && diffDays > 1;
+    if (diffDays <= maxGapDays && !pageSkip) return null;
+    return {
+      diffDays: Number(diffDays.toFixed(1)),
+      pageGap: pageSkip,
+      uncrawledNullPage: false,
+    };
+  }
+
+  /** Walk older synced posts below anchorPostId until hitting a date or page gap. */
+  findContiguousSyncedFollowup(anchorPostId, { maxGapDays = 5 } = {}) {
+    const anchor = this.db.prepare('SELECT id, date, page_found FROM posts WHERE id = ?').get(Number(anchorPostId));
+    if (!anchor) {
+      return { contiguousPosts: 0, totalOlderInDb: 0, hasGapBelow: true, nextGap: null };
+    }
+    const rows = this.db.prepare(`
+      SELECT id, date, page_found
+      FROM posts
+      WHERE date < ? OR (date = ? AND id < ?)
+      ORDER BY date DESC, id DESC
+    `).all(anchor.date, anchor.date, anchor.id);
+
+    let prev = anchor;
+    let contiguousPosts = 0;
+    let hasGapBelow = false;
+    let nextGap = null;
+
+    for (const curr of rows) {
+      const gap = this._detectSyncGap(prev, curr, maxGapDays);
+      if (gap) {
+        hasGapBelow = true;
+        nextGap = {
+          afterDate: prev.date,
+          beforeDate: curr.date,
+          diffDays: gap.diffDays,
+          pageGap: gap.pageGap,
+        };
+        break;
+      }
+      contiguousPosts += 1;
+      prev = curr;
+    }
+
+    return {
+      contiguousPosts,
+      totalOlderInDb: rows.length,
+      hasGapBelow,
+      nextGap,
+    };
+  }
+
+  /** Summarize local sync coverage, missing counts, and detected gaps against remote totals. */
+  getSyncCoverage({ totalPosts = null, totalPages = null, perPage = 10, maxGapDays = 5 } = {}) {
+    const rows = this.db.prepare('SELECT id, date, page_found FROM posts ORDER BY date DESC, id DESC').all();
+    const localPosts = rows.length;
+    const pendingDeepSync = this.countUnsyncedPosts();
+    const gaps = [];
+    let nullRunGap = null;
+
+    for (let i = 0; i < rows.length - 1; i++) {
+      const prev = rows[i];
+      const curr = rows[i + 1];
+      const gap = this._detectSyncGap(prev, curr, maxGapDays);
+      if (gap) {
+        if (gap.uncrawledNullPage) {
+          if (!nullRunGap) {
+            nullRunGap = {
+              afterPostId: prev.id,
+              afterDate: prev.date,
+              beforePostId: curr.id,
+              beforeDate: curr.date,
+              diffDays: gap.diffDays,
+              approxStartPage: Math.floor((i + 1) / perPage) + 1,
+            };
+            gaps.push(nullRunGap);
+          } else {
+            nullRunGap.beforePostId = curr.id;
+            nullRunGap.beforeDate = curr.date;
+            const totalDiff = (new Date(nullRunGap.afterDate) - new Date(curr.date)) / (1000 * 3600 * 24);
+            nullRunGap.diffDays = Number(totalDiff.toFixed(1));
+          }
+        } else {
+          nullRunGap = null;
+          gaps.push({
+            afterPostId: prev.id,
+            afterDate: prev.date,
+            beforePostId: curr.id,
+            beforeDate: curr.date,
+            diffDays: gap.diffDays,
+            approxStartPage: Math.floor((i + 1) / perPage) + 1,
+          });
+        }
+      } else {
+        nullRunGap = null;
+      }
+    }
+
+    const missingPosts = totalPosts !== null && totalPosts !== undefined
+      ? Math.max(0, totalPosts - localPosts)
+      : null;
+    const missingPagesEstimate = missingPosts !== null
+      ? Math.ceil(missingPosts / perPage)
+      : null;
+    const syncedPagesEstimate = totalPages !== null && missingPagesEstimate !== null
+      ? Math.max(0, totalPages - missingPagesEstimate)
+      : Math.floor(localPosts / perPage);
+
+    return {
+      localPosts,
+      totalPosts,
+      totalPages,
+      perPage,
+      missingPosts,
+      missingPagesEstimate,
+      syncedPagesEstimate,
+      pendingDeepSync,
+      newestDate: rows[0]?.date || null,
+      oldestDate: rows[rows.length - 1]?.date || null,
+      gaps,
+    };
+  }
+
   /** Full-text search over title + synopsis (FTS5). Returns posts in the same shape as listPosts/getPost. */
   searchPosts(query, { limit = 25 } = {}) {
     if (!query || !query.trim()) return [];

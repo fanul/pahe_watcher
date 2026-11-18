@@ -2,7 +2,7 @@
 import { $, api } from './state.js';
 import { populateWatcherSettings, serializeWatcherSettings } from './settings/watcher.js';
 import { populateBypassSettings, serializeBypassSettings } from './settings/bypass.js';
-import { populateSheetsSettings, serializeSheetsSettings } from './settings/sheets.js';
+import { populateSheetsSettings, serializeSheetsSettings, initSheetsSettings } from './settings/sheets.js';
 import { populateJdownloaderSettings, serializeJdownloaderSettings } from './settings/jdownloader.js';
 import { populateCaptchaSettings, serializeCaptchaSettings, updateGroupVisibility } from './settings/captcha.js';
 import { populateGdflixSettings, serializeGdflixSettings, initGdflixSettings } from './settings/gdflix.js';
@@ -45,15 +45,21 @@ export function initSettings(refreshAll) {
   const f = $('#settingsForm');
 
   providerSelect.addEventListener('change', () => updateGroupVisibility(f));
+  initSheetsSettings(f);
   initGdflixSettings(f);
   initBackupSettings();
-  initDriveBackupSettings(f);
+  initDriveBackupSettings(f, refreshAll);
 
   const btnGoogleLogin = $('#btnOpenGoogleLogin');
   if (btnGoogleLogin) btnGoogleLogin.onclick = () => openLoginHelper('https://accounts.google.com/signin');
 
   const btnGdflixLogin = $('#btnOpenGdflixLogin');
-  if (btnGdflixLogin) btnGdflixLogin.onclick = () => openLoginHelper('https://new4.gdflix.io/login');
+  if (btnGdflixLogin) {
+    btnGdflixLogin.onclick = () => {
+      const loginUrl = ($('#gdflixLoginUrl')?.value || '').trim() || 'https://new4.gdflix.io/login';
+      openLoginHelper(loginUrl);
+    };
+  }
 
   const btnTestJdownloader = $('#btnTestJdownloader');
   if (btnTestJdownloader) {

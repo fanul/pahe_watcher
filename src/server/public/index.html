@@ -167,6 +167,9 @@
       </div>
       
       <div id="panelCrawl" class="tab-content hidden">
+        <div id="syncCoverageBanner" class="card" style="margin-bottom: 10px; padding: 10px 12px; font-size: 12px; background: #161b22; border: 1px solid var(--border); border-radius: 6px;">
+          Memuat status cakupan sinkronisasi...
+        </div>
         <div class="crawl-controls">
           <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text);">
             Pages per batch:
@@ -182,9 +185,14 @@
           <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text);">
             <input id="crawlDeepSync" type="checkbox" checked /> Deep sync content
           </label>
-          <button id="btnStartCrawl" class="btn small">Run Batch</button>
+          <button id="btnSyncAll" class="btn small" style="background: var(--accent, #238636); color: #fff; font-weight: 600;" title="Otomatis melewati blok halaman yang sudah tersync di database dan hanya mengambil halaman yang hilang/celah saja.">⚡ Sync All (Selektif)</button>
+          <button id="btnStartCrawl" class="btn small ghost">Run 1 Batch</button>
           <button id="btnResetCursor" class="btn small ghost">Reset Cursor</button>
           <span id="crawlProgress" class="muted small" style="margin-left: 8px;"></span>
+        </div>
+        <div id="syncAllProgressBarContainer" style="display: none; margin-top: 10px; width: 100%; background: #21262d; border-radius: 6px; height: 20px; overflow: hidden; position: relative;">
+          <div id="syncAllProgressBar" style="height: 100%; width: 0%; background: linear-gradient(90deg, #238636, #2ea043); transition: width 0.3s ease;"></div>
+          <div id="syncAllProgressText" style="position: absolute; width: 100%; text-align: center; font-size: 11px; line-height: 20px; color: #fff; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.7);"></div>
         </div>
         <div class="crawl-controls" style="margin-top: 8px;">
           <span id="deepSyncStatus" class="muted small"></span>
@@ -399,6 +407,11 @@
             <input name="sheetId" placeholder="1aBcD...xyz" />
           </label>
           <label>Google Service Account Key (JSON)
+            <div style="display: flex; gap: 8px; align-items: center; margin: 4px 0 6px 0;">
+              <input type="file" id="inputSheetsServiceAccountJson" accept=".json" style="display: none;" />
+              <button type="button" id="btnUploadSheetsKeyJson" class="btn ghost" style="padding: 2px 8px; font-size: 11px; height: auto;">📁 Upload Service Account JSON</button>
+              <span id="sheetsKeyJsonStatus" class="muted small"></span>
+            </div>
             <textarea name="serviceAccountKeyContent" rows="4" placeholder='{ "type": "service_account", ... }'></textarea>
           </label>
           <div class="muted small" style="margin-top: 4px;">Status: <span id="sheetInfo"></span></div>
@@ -467,8 +480,14 @@
           <legend>GDFlix Authentication</legend>
           <div class="muted small" style="margin-bottom: 10px;">
             Prefer logging in directly over pasting cookies — a session created right here lives in the same
-            browser profile every job runs through, so it just works without any copy/paste.
-            <button type="button" id="btnOpenGdflixLogin" class="btn" style="padding: 3px 10px; font-size: 11px; height: auto; margin-left: 4px;">Buka halaman login GDFlix</button>
+            browser profile every job runs through. You can also extract cookies from that browser session into
+            the Per-Domain Manager below so they work across mirror domains.
+            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px;">
+              <input type="text" id="gdflixLoginUrl" value="https://new4.gdflix.io/login" placeholder="https://new4.gdflix.io/login" style="flex: 1; min-width: 180px; padding: 3px 8px; font-size: 11px; background: #0d1117; border: 1px solid var(--border); border-radius: 4px; color: var(--text);" />
+              <button type="button" id="btnOpenGdflixLogin" class="btn" style="padding: 3px 10px; font-size: 11px; height: auto;">Buka halaman login GDFlix</button>
+              <button type="button" id="btnExtractGdflixCookies" class="btn ghost" style="padding: 3px 10px; font-size: 11px; height: auto;">Ambil Cookies dari Browser</button>
+            </div>
+            <div id="gdflixExtractStatus" class="muted small" style="margin-top: 4px;"></div>
           </div>
           <label>GDFlix Email
             <input name="gdflixEmail" type="email" placeholder="email@example.com" />
@@ -578,6 +597,18 @@
             Services → Credentials → Create Credentials → OAuth client ID → "Web application", with an Authorized
             redirect URI of <code id="driveOauthRedirectHint">http://this-app's-host:port/oauth/drive/callback</code>,
             paste the Client ID/Secret below, then click Connect.
+          </div>
+          <div style="background: rgba(255, 255, 255, 0.03); border: 1px dashed var(--border); border-radius: 6px; padding: 10px; margin: 8px 0 12px 0;">
+            <div style="font-weight: 500; font-size: 12px; margin-bottom: 4px;">⚡ Isi Otomatis dari File OAuth JSON</div>
+            <div class="muted small" style="margin-bottom: 8px;">
+              Upload atau paste file <code>client_secret_*.json</code> dari Google Cloud Console. Sistem akan membaca dan mengisi Client ID &amp; Secret secara otomatis.
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <input type="file" id="inputDriveOauthJson" accept=".json" style="display: none;" />
+              <button type="button" id="btnUploadDriveOauthJson" class="btn ghost" style="padding: 3px 8px; font-size: 11px; height: auto;">📁 Upload client_secret.json</button>
+              <button type="button" id="btnPasteDriveOauthJson" class="btn ghost" style="padding: 3px 8px; font-size: 11px; height: auto;">📋 Paste JSON</button>
+              <span id="driveOauthJsonStatus" class="muted small"></span>
+            </div>
           </div>
           <label>OAuth Client ID
             <input name="driveBackupOauthClientId" type="text" placeholder="123456789-abc.apps.googleusercontent.com" />

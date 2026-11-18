@@ -1,6 +1,7 @@
 // configManager.js coordinates configuration override mapping & persistence.
 import { createLogger } from './core/logger.js';
 import { createCaptchaSolver } from './bypass/captcha/index.js';
+import { resolveHeadless } from './bypass/index.js';
 import {
   getPublicWatcherConfig,
   applyWatcherOverrides,
@@ -108,12 +109,13 @@ export async function updateConfig(runtime, store, sheets, bypass, watcher, patc
       patch.bypass.removeOuoAds !== undefined
     ) {
       await bypass.close().catch(() => {});
-      bypass.browser.headless = runtime.bypass.browserMode !== 'headful';
+      const headless = resolveHeadless(runtime);
+      bypass.browser.headless = headless;
       bypass.browser.initialPageDelayMs = (runtime.bypass.initialPageDelaySeconds || 1.5) * 1000;
       bypass.browser.config = runtime;
     }
     bypass.captcha = createCaptchaSolver(runtime, {
-      headless: runtime.bypass.browserMode !== 'headful',
+      headless: resolveHeadless(runtime),
     });
   }
 

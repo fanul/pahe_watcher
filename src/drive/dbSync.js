@@ -75,10 +75,17 @@ function mergeByPrimaryKey(localDb, remoteDb, table, idCol = 'id') {
   );
 
   const inserted = new Set();
-  for (const row of remoteRows) {
-    if (localIds.has(row[idCol])) continue;
-    insertStmt.run(...cols.map((c) => (c in row ? row[c] : null)));
-    inserted.add(row[idCol]);
+  localDb.exec('BEGIN');
+  try {
+    for (const row of remoteRows) {
+      if (localIds.has(row[idCol])) continue;
+      insertStmt.run(...cols.map((c) => (c in row ? row[c] : null)));
+      inserted.add(row[idCol]);
+    }
+    localDb.exec('COMMIT');
+  } catch (err) {
+    localDb.exec('ROLLBACK');
+    throw err;
   }
   return inserted;
 }
@@ -104,10 +111,17 @@ function copyOptionsForNewPosts(localDb, remoteDb, newlyPulledPostIds) {
   );
   const remoteRows = remoteDb.prepare('SELECT * FROM post_options').all();
   let copied = 0;
-  for (const row of remoteRows) {
-    if (!newlyPulledPostIds.has(row.post_id)) continue;
-    insertStmt.run(...cols.map((c) => (c in row ? row[c] : null)));
-    copied += 1;
+  localDb.exec('BEGIN');
+  try {
+    for (const row of remoteRows) {
+      if (!newlyPulledPostIds.has(row.post_id)) continue;
+      insertStmt.run(...cols.map((c) => (c in row ? row[c] : null)));
+      copied += 1;
+    }
+    localDb.exec('COMMIT');
+  } catch (err) {
+    localDb.exec('ROLLBACK');
+    throw err;
   }
   return copied;
 }

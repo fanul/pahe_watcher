@@ -183,16 +183,61 @@ export class BypassEngine {
    * that entirely, since the session is then native to this machine.
    */
   async openLoginPage(url) {
-    if (this.browser.headless) {
-      throw new Error('Browser is running headless — switch Browser Mode to "headful" in Settings, then try again.');
+    if (this.browser.headless && !this.config?.bypass?.cdpEnabled) {
+      if (this.activeJobs.size > 0) {
+        throw new Error(
+          `Browser is running headless with ${this.activeJobs.size} active job(s) — wait for them to finish or switch Browser Mode to "headful" in Settings.`,
+        );
+      }
+      // Temporarily switch to headful for the manual login window so users on
+      // headless/auto-captcha setups can still log in without changing Settings.
+      await this.browser.close().catch(() => {});
+      this.browser.headless = false;
     }
     const page = await this.browser.newPage();
+    if (resolveHeadless(this.config) && !this.config?.bypass?.cdpEnabled) {
+      page.once('close', () => {
+        if (this.activeJobs.size === 0) {
+          this.browser.headless = resolveHeadless(this.config);
+        }
+      });
+    }
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch((err) => {
       log.warn(`openLoginPage navigation error: ${err.message}`);
     });
     await restoreWindow(page);
     await page.bringToFront().catch(() => {});
     return { url: page.url() };
+  }
+
+  /**
+   * Reads GDFlix/GDToT cookies currently stored in the persistent browser
+   * profile, grouped by normalized domain, so Settings can import them into
+   * the per-domain cookie manager for cross-mirror reuse.
+   */
+  async extractGdflixCookies() {
+    const context = await this.browser._ensureContext();
+    const allCookies = await context.cookies();
+    const byDomain = {};
+    let count = 0;
+
+    for (const c of allCookies) {
+      const host = (c.domain || '').replace(/^\./, '').toLowerCase();
+      if (!host || !isGdflixUrl(`https://${host}`)) continue;
+      if (!byDomain[host]) byDomain[host] = [];
+      byDomain[host].push({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path || '/',
+        secure: c.secure ?? true,
+        httpOnly: c.httpOnly ?? false,
+        sameSite: c.sameSite || 'Lax',
+      });
+      count++;
+    }
+
+    return { count, byDomain };
   }
 
   async abort(jobId) {

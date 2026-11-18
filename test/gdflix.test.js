@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isGdflixUrl, classifyFinalLink, resolveGdflix, isMultiupValidateUrl, pickMultiupMirrorLink } from '../src/bypass/resolvers/gdflix.js';
+import { BypassEngine } from '../src/bypass/index.js';
 
 test('isGdflixUrl matches real GDFlix mirrors, including subdomains and various TLDs', () => {
   const shouldMatch = [
@@ -193,4 +194,25 @@ test('resolveGdflix follows a multiup validator link through to a real mirror in
   } finally {
     delete global.document;
   }
+});
+
+test('BypassEngine.extractGdflixCookies filters and groups only GDFlix/GDToT cookies by domain', async () => {
+  const fakeEngine = {
+    browser: {
+      _ensureContext: async () => ({
+        cookies: async () => [
+          { name: 'laravel_session', value: 'abc', domain: '.new4.gdflix.io', path: '/' },
+          { name: 'XSRF-TOKEN', value: 'xyz', domain: 'new4.gdflix.io', path: '/' },
+          { name: 'gdtot_sess', value: '123', domain: '.gdtot.dad', path: '/' },
+          { name: 'SID', value: 'google-sid', domain: '.google.com', path: '/' },
+        ],
+      }),
+    },
+  };
+
+  const res = await BypassEngine.prototype.extractGdflixCookies.call(fakeEngine);
+  assert.equal(res.count, 3);
+  assert.deepEqual(Object.keys(res.byDomain).sort(), ['gdtot.dad', 'new4.gdflix.io']);
+  assert.equal(res.byDomain['new4.gdflix.io'].length, 2);
+  assert.equal(res.byDomain['gdtot.dad'].length, 1);
 });

@@ -197,8 +197,8 @@ export function createApiRouter(app) {
   // ── sync (resumable historical backfill + deep-sync sweep) ──
   router.post('/sync/backfill/run', async (req, res) => {
     try {
-      const { batchSize, direction, deepSync } = req.body || {};
-      const result = await watcher.runBackfill({ batchSize, direction, deepSync });
+      const { batchSize, direction, deepSync, selective } = req.body || {};
+      const result = await watcher.runBackfill({ batchSize, direction, deepSync, selective: Boolean(selective) });
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -206,6 +206,15 @@ export function createApiRouter(app) {
   });
   router.get('/sync/backfill/status', (req, res) => {
     res.json(watcher.getBackfillStatus());
+  });
+  router.get('/sync/coverage', (req, res) => {
+    const cursor = watcher.getBackfillStatus();
+    const perPage = runtime.watcher.perPage || 10;
+    res.json(store.getSyncCoverage({
+      totalPosts: cursor.totalPosts,
+      totalPages: cursor.totalPages,
+      perPage,
+    }));
   });
   router.post('/sync/backfill/reset', (req, res) => {
     const { page, direction } = req.body || {};
@@ -387,6 +396,15 @@ export function createApiRouter(app) {
       res.json({ ok: true, ...result });
     } catch (err) {
       res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  router.get('/browser/gdflix-cookies', async (req, res) => {
+    try {
+      const result = await bypass.extractGdflixCookies();
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
     }
   });
 

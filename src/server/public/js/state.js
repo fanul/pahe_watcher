@@ -14,7 +14,14 @@ export async function api(path, opts = {}) {
     ...opts,
     headers: { 'Content-Type': 'application/json', ...authHeaders, ...(opts.headers || {}) },
   });
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  if (!res.ok) {
+    let msg = `${path} -> ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.error) msg = data.error;
+    } catch {}
+    throw new Error(msg);
+  }
   return res.status === 204 ? null : res.json();
 }
 

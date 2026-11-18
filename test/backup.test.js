@@ -6,6 +6,7 @@ import os from 'node:os';
 import AdmZip from 'adm-zip';
 import { Store } from '../src/core/store.js';
 import { buildBackupZip, restoreBackupZip } from '../src/core/backup.js';
+import { parseOauthCredentials, applyDriveBackupOverrides } from '../src/config/driveBackup.js';
 
 function tmpStore() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pahe-backup-test-'));
@@ -98,4 +99,62 @@ test('restoreBackupZip writes the db to sqlitePath, clears stale -wal/-shm, and 
   const restoredStore = new Store({ sqlitePath: restoredDbPath, jsonPath: path.join(restoreDir, 'nonexistent.json') });
   assert.equal(restoredStore.getPost(2).title, 'Restore Me');
   restoredStore.close();
+});
+
+test('parseOauthCredentials extracts clientId and clientSecret from Google Cloud Console web/installed JSON', () => {
+  // Web application format from Google Cloud Console
+  const webJson = JSON.stringify({
+    web: {
+      client_id: '123456-web.apps.googleusercontent.com',
+      client_secret: 'GOCSPX-secret123',
+      redirect_uris: ['http://localhost:8787/oauth/drive/callback'],
+    },
+  });
+  const parsedWeb = parseOauthCredentials(webJson);
+  assert.equal(parsedWeb?.clientId, '123456-web.apps.googleusercontent.com');
+  assert.equal(parsedWeb?.clientSecret, 'GOCSPX-secret123');
+  assert.deepEqual(parsedWeb?.redirectUris, ['http://localhost:8787/oauth/drive/callback']);
+
+  // Desktop/installed format
+  const installedJson = JSON.stringify({
+    installed: {
+      client_id: '987654-installed.apps.googleusercontent.com',
+      client_secret: 'GOCSPX-installedSecret',
+    },
+  });
+  const parsedInstalled = parseOauthCredentials(installedJson);
+  assert.equal(parsedInstalled?.clientId, '987654-installed.apps.googleusercontent.com');
+  assert.equal(parsedInstalled?.clientSecret, 'GOCSPX-installedSecret');
+
+  // Invalid JSON returns null
+  assert.equal(parseOauthCredentials('not a json'), null);
+  assert.equal(parseOauthCredentials(JSON.stringify({ other: 'keys' })), null);
+});
+
+test('applyDriveBackupOverrides parses oauthJsonContent and applies credentials', () => {
+  const runtime = {
+    driveBackup: {
+      folderId: '',
+      oauthClientId: '',
+      oauthClientSecret: '',
+    },
+  };
+
+  const patch = {
+    driveBackup: {
+      folderId: 'folder-123',
+      oauthJsonContent: JSON.stringify({
+        web: {
+          client_id: 'auto-client-id',
+          client_secret: 'auto-client-secret',
+        },
+      }),
+    },
+  };
+
+  applyDriveBackupOverrides(runtime, patch);
+  assert.equal(runtime.driveBackup.folderId, 'folder-123');
+  assert.equal(runtime.driveBackup.oauthClientId, 'auto-client-id');
+  assert.equal(runtime.driveBackup.oauthClientSecret, 'auto-client-secret');
+  assert.equal(patch.driveBackup.oauthJsonContent, undefined);
 });

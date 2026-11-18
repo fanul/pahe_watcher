@@ -18,6 +18,7 @@ export function markAccumulatedSourceIncomplete(id, flag) {
 }
 
 export function initCrawl(refreshAll) {
+  const btnSyncAll = $('#btnSyncAll');
   const btnStartCrawl = $('#btnStartCrawl');
   const btnResetCursor = $('#btnResetCursor');
   const btnDeepSyncSweep = $('#btnDeepSyncSweep');
@@ -35,10 +36,155 @@ export function initCrawl(refreshAll) {
   const metadataBackfillBatchSize = $('#metadataBackfillBatchSize');
   const seriesResyncBatchSize = $('#seriesResyncBatchSize');
 
+  const syncCoverageBanner = $('#syncCoverageBanner');
+  const syncAllProgressBarContainer = $('#syncAllProgressBarContainer');
+  const syncAllProgressBar = $('#syncAllProgressBar');
+  const syncAllProgressText = $('#syncAllProgressText');
+
+  let isSyncAllRunning = false;
+
+  function updateProgressBar(page, totalPages, direction) {
+    if (!totalPages || totalPages <= 0) return;
+    let pct = 0;
+    if (direction === 'older') {
+      pct = Math.min(100, Math.max(0, Math.round((page / totalPages) * 100)));
+    } else {
+      pct = Math.min(100, Math.max(0, Math.round(((totalPages - page) / totalPages) * 100)));
+    }
+    if (syncAllProgressBar) syncAllProgressBar.style.width = `${pct}%`;
+    if (syncAllProgressText) syncAllProgressText.textContent = `Halaman ${page} dari ${totalPages} (${pct}%)`;
+  }
+
   refreshDeepSyncStatus();
   refreshMetadataBackfillStatus();
   refreshSeriesResyncStatus();
   refreshCursorStatus();
+  refreshCoverageStatus();
+
+  btnSyncAll?.addEventListener('click', async () => {
+    if (isSyncAllRunning) {
+      isSyncAllRunning = false;
+      btnSyncAll.textContent = 'Menghentikan…';
+      btnSyncAll.disabled = true;
+      return;
+    }
+
+    isSyncAllRunning = true;
+    btnSyncAll.textContent = '⏹ Stop Sync All';
+    btnSyncAll.style.background = 'var(--danger, #da3633)';
+    btnStartCrawl.disabled = true;
+    btnResetCursor.disabled = true;
+    if (syncAllProgressBarContainer) syncAllProgressBarContainer.style.display = 'block';
+
+    let totalPagesProcessed = 0;
+    let totalPagesSkipped = 0;
+    let totalDiscovered = 0;
+    let totalDeepSynced = 0;
+    let consecutiveErrors = 0;
+
+    try {
+      // Start at page 1 (older) so selective sync catches new top posts and jumps over already-synced blocks straight to any gaps.
+      await api('/sync/backfill/reset', {
+        method: 'POST',
+        body: JSON.stringify({ page: 1, direction: 'older' }),
+      });
+      crawlDirection.value = 'older';
+
+      while (isSyncAllRunning) {
+        const batchSize = +crawlMaxPages.value || 10;
+        const direction = 'older';
+        const deepSync = crawlDeepSync.checked;
+
+        crawlProgress.textContent = `⚡ Sync Selektif berjalan... Memeriksa ${batchSize} halaman berikutnya (otomatis melewati blok yang sudah tersync)...`;
+
+        let res;
+        try {
+          res = await api('/sync/backfill/run', {
+            method: 'POST',
+            body: JSON.stringify({ batchSize, direction, deepSync, selective: true }),
+          });
+          consecutiveErrors = 0;
+        } catch (err) {
+          consecutiveErrors++;
+          crawlProgress.textContent = `⚠ Gangguan koneksi ke pahe.ink (${err.message}). Mencoba lagi (${consecutiveErrors}/3)...`;
+          if (consecutiveErrors >= 3) {
+            throw new Error(`Gagal setelah 3x percobaan: ${err.message}`);
+          }
+          await new Promise((r) => setTimeout(r, 3000));
+          continue;
+        }
+
+        accumulated = [...res.entries, ...accumulated].slice(0, 500);
+        renderCrawlResults();
+        totalPagesProcessed += res.pagesProcessed || 0;
+        totalPagesSkipped += res.pagesSkipped || 0;
+        totalDiscovered += res.postsListed || 0;
+        totalDeepSynced += res.postsDeepSynced || 0;
+
+        const c = res.cursor;
+        const currentPage = Math.min(c.page, c.totalPages || c.page);
+        updateProgressBar(currentPage, c.totalPages, c.direction);
+
+        const summary = `⚡ Sync Selektif: Hal ${currentPage}/${c.totalPages || '?'} — Diproses: ${totalPagesProcessed} hal, Dilewati/Skip: ${totalPagesSkipped} hal, +${totalDiscovered} post baru (+${totalDeepSynced} deep synced).`;
+        crawlProgress.textContent = summary;
+        if (syncAllProgressText && c.totalPages) {
+          const pct = Math.min(100, Math.max(0, Math.round((currentPage / c.totalPages) * 100)));
+          syncAllProgressText.textContent = `Hal ${currentPage}/${c.totalPages} (${pct}%) · Skip: ${totalPagesSkipped} hal · +${totalDiscovered} post`;
+        }
+
+        refreshDeepSyncStatus();
+        refreshCoverageStatus();
+
+        if (refreshAll && Math.random() < 0.3) {
+          refreshAll();
+        }
+
+        if (res.done) {
+          if (deepSync && isSyncAllRunning) {
+            const dsStatus = await api('/sync/deep-sync/status').catch(() => null);
+            let pendingDs = dsStatus?.pending || 0;
+            while (pendingDs > 0 && isSyncAllRunning) {
+              crawlProgress.textContent = `⚡ Halaman selesai — melengkapi deep sync untuk ${pendingDs} post yang masih shallow...`;
+              const dsRes = await api('/sync/deep-sync/run', {
+                method: 'POST',
+                body: JSON.stringify({ batchSize: +deepSyncBatchSize.value || 20 }),
+              });
+              accumulated = [...dsRes.entries, ...accumulated].slice(0, 500);
+              renderCrawlResults();
+              totalDeepSynced += dsRes.processed || 0;
+              pendingDs = dsRes.remaining || 0;
+              deepSyncStatus.textContent = `Deep-synced ${dsRes.processed} post(s), ${pendingDs} still pending.`;
+              if (!dsRes.processed) break;
+              await new Promise((r) => setTimeout(r, 400));
+            }
+          }
+
+          if (isSyncAllRunning) {
+            crawlProgress.textContent = `🎉 Selesai! Diproses: ${totalPagesProcessed} hal, Dilewati/Skip: ${totalPagesSkipped} hal, +${totalDiscovered} post baru (+${totalDeepSynced} deep synced).`;
+            if (syncAllProgressBar) syncAllProgressBar.style.width = '100%';
+            if (syncAllProgressText) syncAllProgressText.textContent = `100% Selesai (${c.totalPages || currentPage} Halaman · Skip: ${totalPagesSkipped} hal)`;
+          }
+          if (refreshAll) refreshAll();
+          break;
+        }
+
+        // Brief polite pause between requests to prevent rate limiting
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    } catch (err) {
+      crawlProgress.textContent = `❌ Sync All terhenti: ${err.message}`;
+    } finally {
+      isSyncAllRunning = false;
+      btnSyncAll.textContent = '⚡ Sync All (Selektif)';
+      btnSyncAll.style.background = 'var(--accent, #238636)';
+      btnSyncAll.disabled = false;
+      btnStartCrawl.disabled = false;
+      btnResetCursor.disabled = false;
+      refreshCoverageStatus();
+      refreshDeepSyncStatus();
+      if (refreshAll) refreshAll();
+    }
+  });
 
   btnStartCrawl.onclick = async () => {
     btnStartCrawl.disabled = true;
@@ -60,6 +206,7 @@ export function initCrawl(refreshAll) {
         ? `Done — reached the end (page ${c.page}/${c.totalPages || '?'}).`
         : `Batch complete: ${res.pagesProcessed} page(s), ${res.postsListed} listed, ${res.postsDeepSynced} deep-synced. Cursor at page ${c.page}/${c.totalPages || '?'}.`;
       refreshDeepSyncStatus();
+      refreshCoverageStatus();
     } catch (err) {
       crawlProgress.textContent = 'Batch failed.';
       crawlResults.innerHTML = `<div class="card" style="color:var(--red)">Sync error: ${esc(err.message)}</div>`;
@@ -74,6 +221,7 @@ export function initCrawl(refreshAll) {
     accumulated = [];
     renderCrawlResults();
     refreshCursorStatus();
+    refreshCoverageStatus();
   };
 
   btnDeepSyncSweep.onclick = async () => {
@@ -87,6 +235,7 @@ export function initCrawl(refreshAll) {
       accumulated = [...res.entries, ...accumulated];
       renderCrawlResults();
       deepSyncStatus.textContent = `Deep-synced ${res.processed} post(s), ${res.remaining} still pending.`;
+      refreshCoverageStatus();
     } finally {
       btnDeepSyncSweep.disabled = false;
     }
@@ -103,6 +252,7 @@ export function initCrawl(refreshAll) {
       accumulated = [...res.entries, ...accumulated];
       renderCrawlResults();
       metadataBackfillStatus.textContent = `Resynced ${res.processed} post(s), ${res.remaining} still have incomplete metadata or unresolved quality.`;
+      refreshCoverageStatus();
     } finally {
       btnMetadataBackfillSweep.disabled = false;
     }
@@ -119,10 +269,44 @@ export function initCrawl(refreshAll) {
       accumulated = [...res.entries, ...accumulated];
       renderCrawlResults();
       seriesResyncStatus.textContent = `Resynced ${res.processed} series post(s), ${res.remaining} still stale.`;
+      refreshCoverageStatus();
     } finally {
       btnSeriesResyncSweep.disabled = false;
     }
   };
+
+  async function refreshCoverageStatus() {
+    if (!syncCoverageBanner) return;
+    const cov = await api('/sync/coverage').catch(() => null);
+    if (!cov) return;
+
+    const totalText = cov.totalPosts
+      ? `${cov.localPosts.toLocaleString()} / ${cov.totalPosts.toLocaleString()} post tersimpan (${((cov.localPosts / cov.totalPosts) * 100).toFixed(1)}%)`
+      : `${cov.localPosts.toLocaleString()} post tersimpan`;
+
+    let missingHtml = '';
+    if (cov.missingPosts === 0 && cov.gaps.length === 0) {
+      missingHtml = `<span style="color: #3fb950; font-weight: 600;">✅ Seluruh halaman sudah tersync penuh!</span>`;
+    } else if (cov.missingPosts !== null) {
+      missingHtml = `<span style="color: #d29922;">Kurang ~${cov.missingPosts.toLocaleString()} post (~${cov.missingPagesEstimate} halaman belum tersync)</span>`;
+    }
+
+    let gapsHtml = '';
+    if (cov.gaps.length > 0) {
+      const gapDesc = cov.gaps
+        .map((g) => `Hal ~${g.approxStartPage}: ${String(g.afterDate).slice(0, 10)} → ${String(g.beforeDate).slice(0, 10)} (${g.diffDays} hari)`)
+        .join('; ');
+      gapsHtml = `<div class="muted small" style="margin-top: 4px;">Celah terdeteksi (${cov.gaps.length}): ${esc(gapDesc)}</div>`;
+    }
+
+    syncCoverageBanner.innerHTML = `
+      <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; align-items: center;">
+        <span><strong>Cakupan Sync:</strong> ${esc(totalText)}</span>
+        <span>${missingHtml}</span>
+      </div>
+      ${gapsHtml}
+    `;
+  }
 
   async function refreshDeepSyncStatus() {
     const res = await api('/sync/deep-sync/status').catch(() => null);
@@ -145,6 +329,10 @@ export function initCrawl(refreshAll) {
       crawlMaxPages.value = crawlMaxPages.value || 5;
       crawlDirection.value = cursor.direction || 'older';
       crawlProgress.textContent = `Cursor: page ${cursor.page}${cursor.totalPages ? `/${cursor.totalPages}` : ''} (${cursor.direction}).`;
+      if (cursor.totalPages && cursor.page) {
+        if (syncAllProgressBarContainer) syncAllProgressBarContainer.style.display = 'block';
+        updateProgressBar(cursor.page, cursor.totalPages, cursor.direction);
+      }
     }
   }
 }

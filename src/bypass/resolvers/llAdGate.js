@@ -126,48 +126,49 @@ async function acquireIsolatedContext(config) {
  * actually has a real target — that frame is carried on the result so
  * callers scroll/click inside it, not blindly against the main page.
  */
-async function readButtonState(page) {
+export async function readButtonState(page) {
   const detectInFrame = (frame) =>
     frame
     .evaluate((realPattern) => {
       const isRealLabel = (text) => new RegExp(realPattern, 'i').test(text);
       const buttons = Array.from(document.querySelectorAll('.myButton')).map((el) => {
         const rect = el.getBoundingClientRect();
-        // Center point, not full bounding-box containment. Reported live:
-        // a sweep that stops exactly where the button sits half-cut-off at
-        // the viewport edge (nothing wrong — that can genuinely be the
-        // true scroll extreme, or just where scrollY happened to land)
-        // made this permanently report not-visible, since requiring the
-        // WHOLE box inside [0, innerHeight] fails the moment either edge
-        // is clipped — even though the button's clickable center is
-        // already on-screen. findClickableInstance clicks at this exact
-        // center point, so "is the center on-screen" is the actually
-        // correct question, not "is the whole box on-screen".
+        const style = window.getComputedStyle(el);
+        const renderable =
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          parseFloat(style.opacity || '1') > 0;
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
+        const visible = renderable && cx >= 0 && cx <= window.innerWidth && cy >= 0 && cy <= window.innerHeight;
+        const centered = renderable && cx >= 0 && cx <= window.innerWidth && cy >= 90 && cy <= window.innerHeight - 90;
+        let uncovered = false;
+        if (visible) {
+          const top = document.elementFromPoint(cx, cy);
+          uncovered = !!(top && (top === el || el.contains(top) || top.contains(el)));
+        }
         return {
           text: (el.textContent || '').trim(),
-          visible: rect.width > 0 && rect.height > 0 && cx >= 0 && cx <= window.innerWidth && cy >= 0 && cy <= window.innerHeight,
-          // Diagnostic-only fields (top/scrollY) — cheap to compute, not
-          // used by any decision logic, but lets a live log line show
-          // exactly how the page shifted when the button count changes,
-          // instead of guessing. See "diagnostic: .myButton count changed"
-          // below for why this was added.
+          renderable,
+          visible,
+          centered,
+          uncovered,
           top: Math.round(rect.top),
         };
       });
-      // See REAL_BUTTON_TEXT_PATTERN's own comment above — only a
-      // confirmed-legitimate label can ever be targetIndex, not "anything
-      // except a few known-bad ones".
-      const targetIndex = buttons.findIndex((b) => isRealLabel(b.text));
-      // Reported live: the robot honeypot still got clicked even after the
-      // .myButton allowlist landed — because #wb never went through it at
-      // all. "It's a unique id selector" was wrongly treated as "therefore
-      // safe": uniqueness only means there's one element with that id, not
-      // that the site can't (temporarily, or as a trap) give the honeypot
-      // that same id. #wb now has to pass the exact same allowlist check
-      // as every .myButton instance — no more assumed-safe-by-construction
-      // selector anywhere in this resolver.
+      // Prefer a matching button that is visible & uncovered, then visible, then renderable,
+      // so a hidden 0x0 decoy never shadows a real button in the middle of the page.
+      const realCandidates = buttons
+        .map((b, i) => ({ b, i }))
+        .filter(({ b }) => isRealLabel(b.text));
+      const picked =
+        realCandidates.find(({ b }) => b.visible && b.uncovered) ||
+        realCandidates.find(({ b }) => b.visible) ||
+        realCandidates.find(({ b }) => b.renderable) ||
+        realCandidates[0];
+      const targetIndex = picked ? picked.i : -1;
       const wbEl = document.getElementById('wb');
       const wbText = wbEl ? (wbEl.textContent || '').trim() : '';
       return {
@@ -175,22 +176,14 @@ async function readButtonState(page) {
         hasMyButton: buttons.length > 0,
         targetIndex,
         targetVisible: targetIndex >= 0 ? buttons[targetIndex].visible : false,
-        // Viewport-relative top of the target button right now (negative =
-        // above the viewport, needs scrolling UP; > innerHeight = below,
-        // needs scrolling DOWN) — lets the caller sweep toward the button's
-        // actual side instead of always trying "down" first regardless.
+        targetCentered: targetIndex >= 0 ? buttons[targetIndex].centered : false,
+        targetUncovered: targetIndex >= 0 ? buttons[targetIndex].uncovered : false,
         targetTop: targetIndex >= 0 ? buttons[targetIndex].top : null,
         hasScrollButton: buttons.some((b) => /scroll/i.test(b.text)),
         buttonCount: buttons.length,
         scrollY: Math.round(window.scrollY),
         wbText,
         buttonsSummary: buttons.map((b, i) => `${i}:"${b.text.slice(0, 20)}"${b.visible ? '(vis)' : ''}@${b.top}`).join(', '),
-        // Real hCaptcha/reCAPTCHA/Turnstile iframes always carry a src on
-        // the provider's own domain — if a button-like element only ever
-        // exists inside an iframe, none of the main-frame-only checks
-        // above would ever see it, which would explain a "never detected
-        // at any scroll position" failure that has nothing to do with
-        // scrolling at all.
         iframeCount: document.querySelectorAll('iframe').length,
       };
     }, REAL_BUTTON_TEXT_PATTERN)
@@ -199,12 +192,6 @@ async function readButtonState(page) {
   const frames = page.frames();
   const results = await Promise.all(frames.map(detectInFrame));
 
-  // First frame (main frame is always frames()[0]) that actually has a real,
-  // allowlisted target wins — that's the frame every caller scrolls/clicks
-  // in. If nothing anywhere has a real target yet, fall back to the main
-  // frame's own (likely empty) snapshot so the diagnostic log below still
-  // has sensible numbers, and default to the main frame for any downstream
-  // scroll attempt (a no-op, same as before this iframe-awareness existed).
   let winner = null;
   let winnerFrame = null;
   for (let i = 0; i < frames.length; i++) {
@@ -217,8 +204,9 @@ async function readButtonState(page) {
   }
   if (!winner) {
     winner = results[0] || {
-      hasWb: false, hasMyButton: false, targetIndex: -1, targetVisible: false, hasScrollButton: false,
-      buttonCount: 0, scrollY: -1, wbText: '', buttonsSummary: '', iframeCount: -1,
+      hasWb: false, hasMyButton: false, targetIndex: -1, targetVisible: false, targetCentered: false,
+      targetUncovered: false, hasScrollButton: false, buttonCount: 0, scrollY: -1, wbText: '',
+      buttonsSummary: '', iframeCount: -1,
     };
     winnerFrame = page.mainFrame();
   }
@@ -260,31 +248,30 @@ async function readButtonState(page) {
  * sweep stops the instant it reports a real, visible target — instead of
  * always running the full 25-tick trip to the extreme first regardless.
  */
-async function sweepToExtreme(page, direction, deadline, checkFn) {
-  const deltaY = direction === 'down' ? 900 : -900;
+export async function sweepToExtreme(page, direction, deadline, checkFn) {
+  // Step by 450px (< 768px viewport height) so there is always ~318px of
+  // overlap between consecutive ticks and a button in the middle of the
+  // page (even surrounded by tall ads) can never be jumped over.
+  const stepPx = 450;
+  const deltaY = direction === 'down' ? stepPx : -stepPx;
   const viewport = page.viewportSize() || { width: 1366, height: 768 };
   const cx = Math.round(viewport.width / 2);
   const cy = Math.round(viewport.height / 2);
   let lastSignature = null;
-  for (let i = 0; i < 25 && Date.now() < deadline; i++) {
+  for (let i = 0; i < 40 && Date.now() < deadline; i++) {
     await page.mouse.move(cx, cy).catch(() => {});
     await page.mouse.wheel(0, deltaY).catch(() => {});
-    // Best-effort supplementary nudge for any NESTED scrollable container
-    // the trusted wheel event above might not have reached — deliberately
-    // excludes <html>/<body> (the top-level scroll the wheel event above
-    // already handles as a genuinely trusted gesture; forcing it via JS
-    // too would just duplicate that, not add anything). Never the only
-    // mechanism — the real wheel event still fires regardless — just
-    // insurance for whichever inner element actually holds the button.
+    // Scroll nested scrollable containers incrementally too (not straight to
+    // scrollHeight/0 in one jump, which would skip a middle-positioned button).
     await page
-      .evaluate((d) => {
+      .evaluate((dy) => {
         document.querySelectorAll('*').forEach((el) => {
           if (el === document.documentElement || el === document.body) return;
           if (el.scrollHeight - el.clientHeight > 10) {
-            el.scrollTop = d === 'down' ? el.scrollHeight : 0;
+            el.scrollTop += dy;
           }
         });
-      }, direction)
+      }, deltaY)
       .catch(() => {});
     await page.waitForTimeout(randomDelay(150, 300));
 
@@ -325,74 +312,82 @@ async function sweepToExtreme(page, direction, deadline, checkFn) {
  * and the click-time scan has to run in that same document or it would
  * always see zero elements, same bug as before.
  */
-async function findClickableInstance(frame, selector, allowTextPattern) {
+export async function findClickableInstance(frame, selector, allowTextPattern) {
   return frame
     .evaluate(({ sel, allowPattern }) => {
-      // See REAL_BUTTON_TEXT_PATTERN's comment — a decoy that's on-screen
-      // and genuinely uncovered still needs to be filtered out by TEXT
-      // here, since this scan otherwise has no other way to tell it apart
-      // from the real target (both pass every positional/overlay check).
-      // Allowlist, not a blocklist: only a confirmed-legitimate label ever
-      // qualifies, so a decoy/honeypot text we've never seen before is
-      // rejected by construction rather than needing to be enumerated.
       const allow = allowPattern ? new RegExp(allowPattern, 'i') : null;
       const els = Array.from(document.querySelectorAll(sel));
+      // Probe center first, then 4 inner points in case a small floating ad
+      // overlaps one part of the button while another part is clear.
+      const probeOffsets = [
+        [0.5, 0.5],
+        [0.25, 0.5],
+        [0.75, 0.5],
+        [0.5, 0.25],
+        [0.5, 0.75],
+      ];
       for (let i = 0; i < els.length; i++) {
         const el = els[i];
         if (allow && !allow.test((el.textContent || '').trim())) continue;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) continue;
         const rect = el.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) continue;
-        // Center point, not full bounding-box containment — see
-        // readButtonState's matching comment. A button half-clipped at the
-        // viewport edge (a real, ordinary scroll position, not a bug) has
-        // an on-screen center and IS genuinely clickable there; requiring
-        // the whole box inside the viewport rejected it for no real reason.
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        if (cx < 0 || cx > window.innerWidth || cy < 0 || cy > window.innerHeight) continue; // center off-screen
-        const top = document.elementFromPoint(cx, cy);
-        if (!top) continue;
-        if (top === el || el.contains(top) || window.getComputedStyle(top).cursor === 'pointer') {
-          return i;
+        for (const [rx, ry] of probeOffsets) {
+          const px = rect.left + rect.width * rx;
+          const py = rect.top + rect.height * ry;
+          if (px < 0 || px > window.innerWidth || py < 0 || py > window.innerHeight) continue;
+          const top = document.elementFromPoint(px, py);
+          if (!top) continue;
+          if (top === el || el.contains(top) || top.contains(el)) {
+            return {
+              index: i,
+              position: {
+                x: Math.round(rect.width * rx),
+                y: Math.round(rect.height * ry),
+              },
+            };
+          }
         }
       }
-      return -1;
+      return null;
     }, { sel: selector, allowPattern: allowTextPattern || null })
-    .catch(() => -1);
+    .catch(() => null);
 }
 
-/**
- * Never click just because the selector exists in the DOM — that's clicking
- * straight into whatever decoy overlay is still sitting on top of it (the
- * actual "<div></div> intercepts pointer events" failure, not a timing
- * fluke). Only click once the OS cursor would genuinely show a hand over a
- * specific, on-screen instance of the button (see findClickableInstance
- * for why it has to be instance-aware, not just "does the selector exist
- * anywhere"). And critically: if the click itself still fails — confirmed
- * live this overlay can toggle back on in the gap between the check and
- * the click (a real race, not a one-off) — this does NOT fall through and
- * click blind. It goes back to waiting for clear again, up to the caller's
- * deadline, exactly like a human would keep waiting rather than mash the
- * button through a popup that flickered back in.
- *
- * `page` is still needed here purely for `waitForTimeout` (Frame has no
- * equivalent) — the actual scan/click runs against `frame`, which may be an
- * iframe, not the page's main frame.
- */
 async function clickWhenClear(page, frame, ctx, selector, deadline, allowTextPattern) {
+  let blockedTicks = 0;
   while (Date.now() < deadline) {
-    const idx = await findClickableInstance(frame, selector, allowTextPattern);
-    if (idx >= 0) {
+    const found = await findClickableInstance(frame, selector, allowTextPattern);
+    if (found) {
       const clicked = await frame
         .locator(selector)
-        .nth(idx)
-        .click({ timeout: 3000 })
+        .nth(found.index)
+        .click({ position: found.position, timeout: 3000 })
         .then(() => true)
         .catch((err) => {
           ctx.log?.(`[llGate] Click raced with an overlay reappearing — waiting for clear again (${err.message.split('\n')[0]})`);
           return false;
         });
       if (clicked) return true;
+    } else {
+      blockedTicks++;
+      // If an ad or sticky bar is parked right over the button, re-center it
+      // (and alternate small nudges) so it moves into a clear band.
+      if (blockedTicks % 3 === 0) {
+        const nudge = (blockedTicks / 3) % 2 === 1 ? 0 : 120;
+        await frame
+          .evaluate(({ sel, allowPattern, dy }) => {
+            const allow = allowPattern ? new RegExp(allowPattern, 'i') : null;
+            const els = Array.from(document.querySelectorAll(sel));
+            const target = els.find((el) => !allow || allow.test((el.textContent || '').trim()));
+            if (target) {
+              target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+              if (dy) window.scrollBy(0, dy);
+            }
+          }, { sel: selector, allowPattern: allowTextPattern || null, dy: nudge })
+          .catch(() => {});
+      }
     }
     await page.waitForTimeout(randomDelay(200, 500));
   }
@@ -616,38 +611,23 @@ export async function resolveLLAdGate(startUrl, { ctx = {}, config = {}, timeout
       // sits in the MIDDLE of a page taller than one viewport, since
       // neither extreme ever shows it — that was a real gap, not a timing
       // fluke.
-      if (!buttonState.hasWb && buttonState.targetIndex >= 0 && !buttonState.targetVisible) {
-        // Reported live: for a button currently ABOVE the viewport,
-        // Playwright's own scrollIntoViewIfNeeded() (the "precise"
-        // placement used in the else-branch below) doesn't reliably leave
-        // it actually visible — it does the minimal scroll needed, which
-        // can land the button right at the edge of the viewport instead of
-        // clearly on-screen. A full scroll to the page's true top extreme
-        // is simpler and unambiguous for this specific direction, so
-        // prefer that over "precise" placement whenever the button is
-        // above the viewport. Below-viewport targets keep the precise
-        // scroll (see this block's own earlier comment: a full sweep to
-        // the bottom extreme can overshoot past a target sitting in the
-        // MIDDLE of a page taller than one viewport — that risk doesn't
-        // apply the same way scrolling up toward a near-top button).
-        if (buttonState.targetTop != null && buttonState.targetTop < 0) {
-          ctx.log?.('[llGate] Target button is above the viewport — scrolling all the way to the top');
-          await sweepToExtreme(page, 'up', deadline);
-          buttonState = await readButtonState(page);
-        } else {
-          ctx.log?.('[llGate] Target button is off-screen — scrolling directly to it');
-          // The target may live inside an iframe — get that <iframe>
-          // element itself on-screen in the main page first, or its own
-          // internal scrollIntoViewIfNeeded can succeed while the iframe
-          // box itself is still off-screen in the parent document.
-          if (buttonState.frame !== page.mainFrame()) {
-            const frameEl = await buttonState.frame.frameElement().catch(() => null);
-            await frameEl?.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-          }
-          await buttonState.frame.locator('.myButton').nth(buttonState.targetIndex).scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-          await page.waitForTimeout(randomDelay(200, 400));
-          buttonState = await readButtonState(page);
+      // Primary: a real target already exists in the DOM (off-screen, near a
+      // sticky-ad viewport edge, or covered by an edge/floating ad) — scroll
+      // it directly to the vertical CENTER of the viewport. Using block:'center'
+      // works uniformly whether the target is above, below, or in the middle of
+      // the page, and keeps it clear of top/bottom sticky ad banners.
+      if (!buttonState.hasWb && buttonState.targetIndex >= 0 && (!buttonState.targetVisible || !buttonState.targetCentered || !buttonState.targetUncovered)) {
+        ctx.log?.('[llGate] Centering target button in viewport (away from edge/sticky ads)');
+        if (buttonState.frame !== page.mainFrame()) {
+          const frameEl = await buttonState.frame.frameElement().catch(() => null);
+          await frameEl?.evaluate((el) => el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })).catch(() => {});
         }
+        const targetLoc = buttonState.frame.locator('.myButton').nth(buttonState.targetIndex);
+        await targetLoc
+          .evaluate((el) => el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }))
+          .catch(() => targetLoc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {}));
+        await page.waitForTimeout(randomDelay(200, 400));
+        buttonState = await readButtonState(page);
       }
 
       // Reported live: right after Cloudflare's own interstitial clears (no

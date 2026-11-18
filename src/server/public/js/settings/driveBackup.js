@@ -10,6 +10,53 @@ export function populateDriveBackupSettings(form, cfg) {
 
   const info = document.getElementById('driveBackupConnectedInfo');
   if (info) info.textContent = cfg.driveBackup?.connected ? '✅ connected' : 'not connected';
+
+  const jsonStatus = document.getElementById('driveOauthJsonStatus');
+  if (jsonStatus) jsonStatus.textContent = '';
+}
+
+export function parseAndApplyOauthJson(rawText, form) {
+  const status = document.getElementById('driveOauthJsonStatus');
+  try {
+    const text = typeof rawText === 'string' ? rawText.trim() : JSON.stringify(rawText);
+    if (!text) return false;
+    const json = JSON.parse(text);
+    const creds = json.web || json.installed || json;
+    const clientId = creds.client_id || creds.clientId;
+    const clientSecret = creds.client_secret || creds.clientSecret;
+
+    if (!clientId || !clientSecret) {
+      if (status) {
+        status.innerHTML = '<span style="color: var(--danger, #f85149);">❌ File JSON tidak memiliki client_id atau client_secret yang valid.</span>';
+      }
+      return false;
+    }
+
+    form.driveBackupOauthClientId.value = clientId;
+    form.driveBackupOauthClientSecret.value = clientSecret;
+
+    // Check redirect URI against current host callback
+    const redirectUris = creds.redirect_uris || creds.redirectUris || [];
+    const currentOrigin = window.location.origin;
+    const expectedCallback = `${currentOrigin}/oauth/drive/callback`;
+    const hasExpectedCallback = redirectUris.some((uri) => uri === expectedCallback);
+
+    if (redirectUris.length > 0 && !hasExpectedCallback) {
+      if (status) {
+        status.innerHTML = `<span style="color: #d29922;">⚠ Client ID & Secret terisi! Namun di Google Cloud Console belum ada Authorized Redirect URI: <code>${expectedCallback}</code></span>`;
+      }
+    } else {
+      if (status) {
+        status.innerHTML = `<span style="color: #3fb950;">✅ OAuth JSON valid: Client ID & Secret otomatis terisi!</span>`;
+      }
+    }
+    return true;
+  } catch (err) {
+    if (status) {
+      status.innerHTML = `<span style="color: var(--danger, #f85149);">❌ JSON tidak valid: ${err.message}</span>`;
+    }
+    return false;
+  }
 }
 
 export function serializeDriveBackupSettings(form) {
@@ -43,7 +90,7 @@ export async function refreshDriveBackupList() {
 }
 
 /** Wires the Backup & Restore fieldset's Google Drive buttons. Called once at page init. */
-export function initDriveBackupSettings(form) {
+export function initDriveBackupSettings(form, refreshAll) {
   const btnConnect = $('#btnConnectDriveBackup');
   const btnTest = $('#btnTestDriveBackup');
   const btnSync = $('#btnSyncDriveBackup');
@@ -51,6 +98,47 @@ export function initDriveBackupSettings(form) {
   const btnRestore = $('#btnRestoreDriveBackup');
   const select = $('#driveBackupList');
   const status = $('#driveBackupStatus');
+
+  const btnUploadOauth = $('#btnUploadDriveOauthJson');
+  const fileInputOauth = $('#inputDriveOauthJson');
+  const btnPasteOauth = $('#btnPasteDriveOauthJson');
+
+  btnUploadOauth?.addEventListener('click', () => {
+    if (fileInputOauth) {
+      fileInputOauth.value = '';
+      fileInputOauth.click();
+    }
+  });
+
+  fileInputOauth?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      parseAndApplyOauthJson(text, form);
+    } catch (err) {
+      const jsonStatus = document.getElementById('driveOauthJsonStatus');
+      if (jsonStatus) jsonStatus.innerHTML = `<span style="color: var(--danger, #f85149);">❌ Gagal membaca file: ${err.message}</span>`;
+    }
+  });
+
+  btnPasteOauth?.addEventListener('click', async () => {
+    try {
+      let text = '';
+      if (navigator.clipboard?.readText) {
+        text = await navigator.clipboard.readText();
+      }
+      if (!text) {
+        text = window.prompt('Paste isi file client_secret_*.json di sini:');
+      }
+      if (text) {
+        parseAndApplyOauthJson(text, form);
+      }
+    } catch {
+      const text = window.prompt('Paste isi file client_secret_*.json di sini:');
+      if (text) parseAndApplyOauthJson(text, form);
+    }
+  });
 
   const setStatus = (msg) => { if (status) status.textContent = msg; };
 
@@ -82,17 +170,27 @@ export function initDriveBackupSettings(form) {
   });
 
   btnSync?.addEventListener('click', async () => {
-    setStatus('Syncing (downloading Drive copy, merging, pushing back)…');
+    btnSync.disabled = true;
+    const oldText = btnSync.textContent;
+    btnSync.textContent = '⏳ Syncing…';
+    setStatus('Syncing (mengunduh copy dari Drive, menggabungkan data, mengunggah kembali)…');
     try {
       const res = await api('/backup/drive/sync', { method: 'POST' });
       const { posts, postOptions, jobs } = res.pulled;
-      setStatus(`Synced — pulled ${posts} post(s) (+${postOptions} option row(s)) and ${jobs} job(s) from Drive; pushed the merged result back.`);
+      setStatus(`✅ Synced — pulled ${posts} post(s) (+${postOptions} option row(s)) and ${jobs} job(s) from Drive; pushed the merged result back.`);
+      if (refreshAll) refreshAll();
     } catch (err) {
-      setStatus(`Sync failed: ${err.message}`);
+      setStatus(`❌ Sync failed: ${err.message}`);
+    } finally {
+      btnSync.disabled = false;
+      btnSync.textContent = oldText;
     }
   });
 
   btnUpload?.addEventListener('click', async () => {
+    btnUpload.disabled = true;
+    const oldText = btnUpload.textContent;
+    btnUpload.textContent = '⏳ Uploading…';
     setStatus('Uploading…');
     try {
       const res = await api('/backup/drive/upload', { method: 'POST' });
@@ -100,6 +198,9 @@ export function initDriveBackupSettings(form) {
       refreshDriveBackupList();
     } catch (err) {
       setStatus(`Upload failed: ${err.message}`);
+    } finally {
+      btnUpload.disabled = false;
+      btnUpload.textContent = oldText;
     }
   });
 

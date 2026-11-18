@@ -1,3 +1,5 @@
+import { api } from '../state.js';
+
 let currentCookiesObj = {};
 let editingDomain = null;
 
@@ -5,10 +7,46 @@ export function initGdflixSettings(form) {
   const btnAdd = document.getElementById('btnAddGdflixCookie');
   const btnCancel = document.getElementById('btnCancelGdflixCookie');
   const btnApply = document.getElementById('btnApplyGdflixCookie');
+  const btnExtract = document.getElementById('btnExtractGdflixCookies');
+  const extractStatus = document.getElementById('gdflixExtractStatus');
   const editor = document.getElementById('gdflixCookieEditor');
   const txtDomain = document.getElementById('gdflixCookieDomain');
   const txtValue = document.getElementById('gdflixCookieValue');
   const title = document.getElementById('gdflixEditorTitle');
+
+  if (btnExtract) {
+    btnExtract.addEventListener('click', async () => {
+      if (extractStatus) extractStatus.textContent = 'Mengambil cookies GDFlix dari browser…';
+      try {
+        const res = await api('/browser/gdflix-cookies');
+        const domains = Object.keys(res.byDomain || {});
+        if (!res.count || domains.length === 0) {
+          if (extractStatus) {
+            extractStatus.innerHTML = '<span style="color: var(--amber);">Belum ada cookies GDFlix di browser. Login dulu via "Buka halaman login GDFlix", lalu klik lagi.</span>';
+          }
+          return;
+        }
+        let latestCookies = null;
+        for (const domain of domains) {
+          const serialized = JSON.stringify(res.byDomain[domain]);
+          currentCookiesObj[domain] = serialized;
+          latestCookies = serialized;
+        }
+        if (latestCookies && !currentCookiesObj['*']) {
+          currentCookiesObj['*'] = latestCookies;
+        }
+        saveToTextarea(form);
+        renderCookieList(form);
+        if (extractStatus) {
+          extractStatus.innerHTML = `<span style="color: #3fb950;">✓ Berhasil mengambil ${res.count} cookie dari ${domains.join(', ')}. Klik Save untuk menyimpan.</span>`;
+        }
+      } catch (err) {
+        if (extractStatus) {
+          extractStatus.innerHTML = `<span style="color: var(--danger, #f85149);">❌ Gagal mengambil cookies: ${err.message}</span>`;
+        }
+      }
+    });
+  }
 
   if (!btnAdd || !btnCancel || !btnApply) return;
 
@@ -94,6 +132,8 @@ export function populateGdflixSettings(form, cfg) {
   // Hide editor on open
   const editor = document.getElementById('gdflixCookieEditor');
   if (editor) editor.style.display = 'none';
+  const extractStatus = document.getElementById('gdflixExtractStatus');
+  if (extractStatus) extractStatus.textContent = '';
 
   renderCookieList(form);
 }

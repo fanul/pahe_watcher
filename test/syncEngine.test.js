@@ -331,3 +331,120 @@ test('runLivePoll with isInitial=true syncs posts to DB but skips enqueuing to q
   assert.equal(pollResult.found, 5); // 5 new posts deep-synced to DB
   assert.equal(queue.enqueued.length, 0); // 0 jobs enqueued on initial load
 });
+
+function makeMultiMonthCatalog(count = 60) {
+  const posts = Array.from({ length: count }, (_, i) => ({
+    id: 2000 - i,
+    date: new Date(Date.UTC(2026, 0, 1 + (count - i))).toISOString().slice(0, 19),
+    link: `https://pahe.ink/post-${2000 - i}`,
+    title: `Movie ${2000 - i}`,
+  }));
+  const fetchedPages = [];
+  const client = {
+    async getPostsPageMeta(page, perPage) {
+      fetchedPages.push(page);
+      const start = (page - 1) * perPage;
+      return { posts: posts.slice(start, start + perPage), totalPosts: posts.length, totalPages: Math.ceil(posts.length / perPage) };
+    },
+    async getLatestPosts(perPage) {
+      return posts.slice(0, perPage);
+    },
+    async getPost(id) {
+      const p = posts.find((x) => x.id === id);
+      return { id, date: p.date, link: p.link, title: p.title, contentHtml: '' };
+    },
+  };
+  return { posts, client, fetchedPages };
+}
+
+test('runBackfillBatch with selective:true skips already-synced prefix and tail, fetching only missing gap pages', async (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const { posts, client, fetchedPages } = makeMultiMonthCatalog(60);
+  const preSyncedRanges = [
+    { start: 0, end: 10, page: 1 },
+    { start: 10, end: 20, page: 2 },
+    // Page 3 (indices 20..29) intentionally missing
+    { start: 30, end: 40, page: 4 },
+    { start: 40, end: 50, page: 5 },
+    { start: 50, end: 60, page: 6 },
+  ];
+  for (const r of preSyncedRanges) {
+    for (const p of posts.slice(r.start, r.end)) {
+      store.markPost({ ...p, options: [], pageFound: r.page });
+    }
+  }
+
+  const engine = new SyncEngine({ config: BASE_CONFIG, store, client, queue: fakeQueue() });
+  const res = await engine.runBackfillBatch({ batchSize: 10, selective: true, deepSync: false });
+
+  assert.equal(res.done, true);
+  assert.ok(res.pagesSkipped >= 3, `expected >= 3 pages skipped, got ${res.pagesSkipped}`);
+  assert.deepEqual(fetchedPages, [1, 3, 4]);
+  assert.equal(store.countPosts(), 60);
+});
+
+test('getSyncCoverage reports missing posts, pages estimate, and date gaps accurately', async (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const { posts, client } = makeMultiMonthCatalog(60);
+  const preSyncedRanges = [
+    { start: 0, end: 10, page: 1 },
+    { start: 10, end: 20, page: 2 },
+    { start: 30, end: 40, page: 4 },
+    { start: 40, end: 50, page: 5 },
+    { start: 50, end: 60, page: 6 },
+  ];
+  for (const r of preSyncedRanges) {
+    for (const p of posts.slice(r.start, r.end)) {
+      store.markPost({ ...p, options: [], pageFound: r.page });
+    }
+  }
+
+  const covBefore = store.getSyncCoverage({ totalPosts: 60, totalPages: 6, perPage: 10 });
+  assert.equal(covBefore.localPosts, 50);
+  assert.equal(covBefore.missingPosts, 10);
+  assert.equal(covBefore.missingPagesEstimate, 1);
+  assert.equal(covBefore.gaps.length, 1);
+
+  const engine = new SyncEngine({ config: BASE_CONFIG, store, client, queue: fakeQueue() });
+  await engine.runBackfillBatch({ batchSize: 10, selective: true, deepSync: false });
+
+  const covAfter = store.getSyncCoverage({ totalPosts: 60, totalPages: 6, perPage: 10 });
+  assert.equal(covAfter.localPosts, 60);
+  assert.equal(covAfter.missingPosts, 0);
+  assert.equal(covAfter.missingPagesEstimate, 0);
+  assert.equal(covAfter.gaps.length, 0);
+});
+
+test('runBackfillBatch with selective:true does not prematurely skip when a page has newly discovered posts and a bumped old post', async (t) => {
+  const { store, dir } = tmpStore();
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const { posts, client, fetchedPages } = makeMultiMonthCatalog(60);
+  const preSyncedRanges = [
+    { start: 0, end: 10, page: 1 },
+    { start: 10, end: 20, page: 2 },
+    // Pages 3 and 4 (20..39) missing
+    { start: 40, end: 50, page: 5 },
+    { start: 50, end: 60, page: 6 },
+  ];
+  for (const r of preSyncedRanges) {
+    for (const p of posts.slice(r.start, r.end)) {
+      store.markPost({ ...p, options: [], pageFound: r.page });
+    }
+  }
+  // Simulate a bumped TV series post at the bottom of Page 3 (posts[29]) already in DB with a stale date from Page 5
+  store.markPost({ ...posts[29], date: posts[45].date, options: [], pageFound: 5 });
+
+  const engine = new SyncEngine({ config: BASE_CONFIG, store, client, queue: fakeQueue() });
+  const res = await engine.runBackfillBatch({ batchSize: 10, selective: true, deepSync: false });
+
+  assert.equal(res.done, true);
+  assert.ok(fetchedPages.includes(3), `expected page 3 to be fetched, got ${fetchedPages}`);
+  assert.ok(fetchedPages.includes(4), `expected page 4 not to be skipped, got ${fetchedPages}`);
+  assert.equal(store.countPosts(), 60);
+  assert.equal(store.getPost(posts[29].id).date, posts[29].date);
+});

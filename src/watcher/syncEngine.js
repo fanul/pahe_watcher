@@ -40,10 +40,29 @@ export class SyncEngine {
     log.info(`Listing page ${page} (direction: ${direction || 'default'})...`);
     const { posts, totalPosts, totalPages } = await this.client.getPostsPageMeta(page, perPage);
     let discovered = 0;
+    let lastPostWasSeen = false;
+    let anyDateChanged = false;
 
     this.store.transaction(() => {
-      for (const post of posts) {
-        if (this.store.hasSeenPost(post.id)) continue;
+      for (let i = 0; i < posts.length; i++) {
+        const post = posts[i];
+        const alreadySeen = this.store.hasSeenPost(post.id);
+        if (i === posts.length - 1) {
+          lastPostWasSeen = alreadySeen;
+        }
+        if (alreadySeen) {
+          if (typeof this.store.updateSeenPostListing === 'function') {
+            const upd = this.store.updateSeenPostListing(post.id, {
+              title: post.title,
+              date: post.date,
+              pageFound: direction ? page : undefined,
+            });
+            if (upd?.dateChanged) anyDateChanged = true;
+          } else if (direction) {
+            this.store.updatePostPageFound?.(post.id, page);
+          }
+          continue;
+        }
         discovered += 1;
         const entry = {
           id: post.id,
@@ -60,7 +79,7 @@ export class SyncEngine {
     });
 
     log.info(`Page ${page} listing sync complete: found ${posts.length} posts (${discovered} new to database).`);
-    return { posts, discovered, totalPosts, totalPages };
+    return { posts, discovered, totalPosts, totalPages, lastPostWasSeen, anyDateChanged };
   }
 
   /**
@@ -228,7 +247,7 @@ export class SyncEngine {
    * continues from where this one left off, rather than restarting at
    * page 1 every time.
    */
-  async runBackfillBatch({ batchSize, direction, deepSync } = {}) {
+  async runBackfillBatch({ batchSize, direction, deepSync, selective = false } = {}) {
     const cfg = this.config.sync || {};
     batchSize = batchSize ?? cfg.backfillBatchSize ?? 5;
     deepSync = deepSync ?? cfg.backfillDeepSync ?? true;
@@ -238,12 +257,14 @@ export class SyncEngine {
       cursor = this._setBackfillCursor({ direction }); // change direction, keep current page
     }
 
-    log.info(`Starting backfill batch: processing ${batchSize} pages (direction: ${cursor.direction}, deepSync: ${deepSync}, current page: ${cursor.page})...`);
+    log.info(`Starting backfill batch: processing ${batchSize} pages (direction: ${cursor.direction}, deepSync: ${deepSync}, selective: ${selective}, current page: ${cursor.page})...`);
 
     const perPage = this.config.watcher.perPage || 10;
     const step = cursor.direction === 'newer' ? -1 : 1;
 
     let pagesProcessed = 0;
+    let pagesSkipped = 0;
+    const skipRanges = [];
     let postsListed = 0;
     let postsDeepSynced = 0;
     let page = cursor.page;
@@ -283,6 +304,59 @@ export class SyncEngine {
         }
 
         pagesProcessed += 1;
+
+        if (
+          selective &&
+          cursor.direction === 'older' &&
+          result.discovered === 0 &&
+          !result.anyDateChanged &&
+          result.lastPostWasSeen &&
+          result.posts.length > 0 &&
+          totalPosts &&
+          totalPages &&
+          typeof this.store.findContiguousSyncedFollowup === 'function'
+        ) {
+          const lastPost = result.posts[result.posts.length - 1];
+          const followup = this.store.findContiguousSyncedFollowup(lastPost.id);
+          const remoteRankOfLast = (page - 1) * perPage + (result.posts.length - 1);
+          const remoteOlderCount = Math.max(0, totalPosts - 1 - remoteRankOfLast);
+          const totalLocalPosts = typeof this.store.countPosts === 'function' ? this.store.countPosts() : 0;
+
+          if (
+            !followup.hasGapBelow &&
+            followup.totalOlderInDb >= remoteOlderCount - perPage &&
+            totalLocalPosts >= totalPosts - perPage
+          ) {
+            if (page < totalPages) {
+              const skipped = totalPages - page;
+              pagesSkipped += skipped;
+              skipRanges.push({ from: page + 1, to: totalPages, reason: 'already-synced-tail' });
+              log.info(`[Selective Sync] All ${followup.totalOlderInDb} older posts already synced with 0 gaps — skipping pages ${page + 1}..${totalPages} (${skipped} pages).`);
+            }
+            page = totalPages + 1;
+            break;
+          }
+
+          const fullSyncedPages = Math.floor(followup.contiguousPosts / perPage);
+          if (fullSyncedPages >= 1 && page < totalPages) {
+            const targetPage = Math.min(totalPages, page + fullSyncedPages + 1);
+            const skippedFrom = page + 1;
+            const skippedTo = targetPage - 1;
+            if (skippedTo >= skippedFrom) {
+              const skipped = skippedTo - skippedFrom + 1;
+              pagesSkipped += skipped;
+              skipRanges.push({
+                from: skippedFrom,
+                to: skippedTo,
+                reason: followup.hasGapBelow ? 'contiguous-before-gap' : 'contiguous-before-tail',
+              });
+              log.info(`[Selective Sync] Skipping already-synced pages ${skippedFrom}..${skippedTo} (${followup.contiguousPosts} contiguous posts) -> jumping to page ${targetPage}.`);
+              page = targetPage;
+              continue;
+            }
+          }
+        }
+
         page += step;
       }
 
@@ -296,10 +370,10 @@ export class SyncEngine {
     }
 
     const done = Boolean(totalPages && (cursor.direction === 'older' ? page > totalPages : page < 1));
-    bus.emit('crawl:progress', { status: done ? 'done' : 'running', page: cursor.page, totalPages, totalPosts, pagesProcessed });
-    log.info('Backfill batch complete', { pagesProcessed, postsListed, postsDeepSynced, page: cursor.page, totalPages });
+    bus.emit('crawl:progress', { status: done ? 'done' : 'running', page: cursor.page, totalPages, totalPosts, pagesProcessed, pagesSkipped });
+    log.info('Backfill batch complete', { pagesProcessed, pagesSkipped, postsListed, postsDeepSynced, page: cursor.page, totalPages });
 
-    return { pagesProcessed, postsListed, postsDeepSynced, cursor, done, entries: touched };
+    return { pagesProcessed, pagesSkipped, skipRanges, postsListed, postsDeepSynced, cursor, done, entries: touched };
   }
 
   /**
